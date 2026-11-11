@@ -5,9 +5,8 @@ The legacy BTHPORT trace is never a readiness gate or an input source here.
 from __future__ import annotations
 
 import asyncio
-import time
 
-from . import config, remote_selection
+from . import config, remote_selection, suspend_clock
 from .chromecast_buttons import HidButtonReceiver, empty_stop_details
 from .chromecast_channel import (Channel, ParentLease, SessionIdentity, DIAGNOSTIC_REASONS,
                                 RECOVERY_DELAYS, RECOVERABLE_RECEIVE_REASONS)
@@ -32,10 +31,10 @@ async def receive(identity, parent, pipe):
         if not recovery["retry"]:
             return result
         commands = recovery["commands"]
-        deadline = time.monotonic() + 30
-        lease = ParentLease(time.monotonic())
-        while time.monotonic() < deadline:
-            now = time.monotonic()
+        deadline = suspend_clock.now() + 30
+        lease = ParentLease(suspend_clock.now())
+        while suspend_clock.now() < deadline:
+            now = suspend_clock.now()
             verify_peer(inspect_peer(parent.pid), parent)
             if not _selected(identity.entity) or not lease.alive(now):
                 return 2
@@ -60,7 +59,7 @@ async def receive(identity, parent, pipe):
 async def _receive_once(identity, parent, pipe, recovery):
     commands, events = Channel(identity, commands=True), Channel(identity, commands=False)
     recovery["commands"] = commands
-    lease = ParentLease(time.monotonic())
+    lease = ParentLease(suspend_clock.now())
     device = tap = receiver = voice = voice_open = initialize = tap_start = None
     announced = False
     cleanup_ok = True
@@ -80,14 +79,14 @@ async def _receive_once(identity, parent, pipe, recovery):
             for row in poll():
                 if (not fallback_extended and row is not None and row.get("step") == "gadget_fallback"
                         and row.get("state") == "begin"):
-                    deadline = max(deadline, time.monotonic() + 35)
+                    deadline = max(deadline, suspend_clock.now() + 35)
                     fallback_extended = True
                 observation.hid_startup(row)
 
     def diagnostic(phase, cause, details=None, *, step=None):
         try:
             current = stage if step is None else step
-            now = time.monotonic()
+            now = suspend_clock.now()
             if phase == "begin":
                 step_started[current] = now
             started = step_started.get(current)
@@ -100,7 +99,7 @@ async def _receive_once(identity, parent, pipe, recovery):
 
     try:
         while True:
-            if not lease.alive(time.monotonic()):
+            if not lease.alive(suspend_clock.now()):
                 raise PipeError("peer_lost")
             raw = pipe.read()
             if raw is not None:
@@ -123,10 +122,10 @@ async def _receive_once(identity, parent, pipe, recovery):
         device = SelectedDevice(identity.entity)
         device.cleanup_observer = observation.voice_cleanup
         initialize = asyncio.create_task(device.open(require_input=False))
-        deadline = time.monotonic() + 20
+        deadline = suspend_clock.now() + 20
         last_peer = 0.0
         while True:
-            now = time.monotonic()
+            now = suspend_clock.now()
             if not lease.alive(now):
                 raise PipeError("peer_lost")
             if now - last_peer >= 1:
@@ -176,7 +175,7 @@ async def _receive_once(identity, parent, pipe, recovery):
                 receiver = HidButtonReceiver(identity.entity, identity.generation)
                 tap = HidTap(identity.entity)
                 tap_start = asyncio.create_task(asyncio.to_thread(tap.start))
-                tap_started = time.monotonic()
+                tap_started = suspend_clock.now()
                 deadline = tap_started + 25
                 observation.stage("hid_primary_start")
             if tap_start is not None:
@@ -198,7 +197,7 @@ async def _receive_once(identity, parent, pipe, recovery):
                                     else "hid_capture_failed") from None
                 finally:
                     startup_evidence()
-                deadline = time.monotonic() + 5
+                deadline = suspend_clock.now() + 5
             stage = "receive"
             startup_evidence()
             for kind, payload, stamp in tap.poll():
@@ -224,7 +223,7 @@ async def _receive_once(identity, parent, pipe, recovery):
                     value = bytes.fromhex(payload)
                 except (TypeError, ValueError):
                     raise PipeError("hid_capture_failed") from None
-                if not 0 <= time.monotonic() - stamp <= 1:
+                if not 0 <= suspend_clock.now() - stamp <= 1:
                     raise PipeError("capture_lost")
                 observation.count("ordinary")
                 edges = receiver.feed(value, stamp)
@@ -321,8 +320,8 @@ async def _receive_once(identity, parent, pipe, recovery):
                     voice_open.cancel()
                     await asyncio.gather(voice_open, return_exceptions=True)
                 voice.stop()
-                deadline = time.monotonic() + 5
-                while time.monotonic() < deadline and not voice.hardware_stopped:
+                deadline = suspend_clock.now() + 5
+                while suspend_clock.now() < deadline and not voice.hardware_stopped:
                     if device is not None:
                         for attribute, value, stamp in device.poll_voice():
                             voice.notification(attribute, value, stamp)
@@ -346,7 +345,7 @@ async def _receive_once(identity, parent, pipe, recovery):
         if receiver is not None:
             stage = "input_release"
             diagnostic("begin", reason)
-            for edge in receiver.stop(time.monotonic()):
+            for edge in receiver.stop(suspend_clock.now()):
                 try:
                     if announced and not events.closed:
                         pipe.write(events.encode_edge(edge))

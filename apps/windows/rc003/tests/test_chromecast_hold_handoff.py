@@ -211,8 +211,7 @@ class HoldHandoffIntegrationTests(unittest.TestCase):
         self.command_out, self.command_in = (Channel(identity, commands=True) for _ in range(2))
         self.event_in.decode(self.event_out.encode("ready"))
         self.command_in.decode(self.command_out.encode("start", mode="run", voice=True))
-        patcher = mock.patch("ovb_rc003.chromecast_voice_receiver.time",
-                             SimpleNamespace(monotonic=lambda: self.now))
+        patcher = mock.patch("ovb_rc003.suspend_clock.now", side_effect=lambda: self.now)
         patcher.start()
         self.addCleanup(patcher.stop)
         patcher = mock.patch("ovb_rc003.chromecast_voice_receiver.config.load_config",

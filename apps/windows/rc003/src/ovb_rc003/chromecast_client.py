@@ -15,6 +15,7 @@ import time
 
 from .chromecast_buttons import ButtonEdge
 from . import chromecast_diagnostics_windows as diagnostics
+from . import suspend_clock
 from .diagnostic_trace import CleanupProgress
 from .chromecast_channel import Channel, SessionIdentity
 from .chromecast_pipe_windows import Pipe, PipeError, api, inspect_peer, verify_peer, bind_worker_peer, launch_worker
@@ -88,7 +89,7 @@ class Client:
         self._input_counts[name] = min(2**31 - 1, self._input_counts[name] + 1)
 
     def _log_input_flow(self, *, final=False):
-        now = time.monotonic()
+        now = suspend_clock.now()
         if not final and now - self._last_input_log < 2:
             return
         self._last_input_log = now
@@ -168,11 +169,11 @@ class Client:
             raise RuntimeError("谷歌遥控器操作已取消。")
         self.thread = threading.Thread(target=self._run, name="chromecast-receiver", daemon=True)
         self.thread.start()
-        deadline = time.monotonic() + 40
+        deadline = suspend_clock.now() + 40
         fallback_extended = False
         if self.mode == "setup":
             while not self.finished.wait(.02):
-                if time.monotonic() >= deadline or (cancel_event and cancel_event.is_set()):
+                if suspend_clock.now() >= deadline or (cancel_event and cancel_event.is_set()):
                     self.stop()
                     raise RuntimeError(message(self.reason))
             if (self.reason != "configured" or not self.cleanup_confirmed or not self.exit_succeeded
@@ -186,9 +187,9 @@ class Client:
             if self.mode == "run" and self.retry_ready.is_set():
                 break  # A short-lived first ready must not strand owner recovery.
             if not fallback_extended and self._gadget_fallback_seen.is_set():
-                deadline = max(deadline, time.monotonic() + 40)
+                deadline = max(deadline, suspend_clock.now() + 40)
                 fallback_extended = True
-            if self.finished.is_set() or time.monotonic() >= deadline or (cancel_event and cancel_event.is_set()):
+            if self.finished.is_set() or suspend_clock.now() >= deadline or (cancel_event and cancel_event.is_set()):
                 self.stop()
                 raise RuntimeError(message(self.reason))
         if self.finished.is_set() or self.cancel.is_set() or (cancel_event and cancel_event.is_set()):
@@ -254,7 +255,7 @@ class Client:
                         "last_worker_stage=%s last_worker_state=%s last_completed=%s native_stack=unavailable",
                         self.identity.generation[:12], role, peer.pid if peer else 0,
                         f"0x{code.value:08X}" if read_ok else "unavailable", self.cancel.is_set(),
-                        self._terminal_type, int((time.monotonic() - self._terminal_at) * 1000)
+                        self._terminal_type, int((suspend_clock.now() - self._terminal_at) * 1000)
                         if self._terminal_at is not None else -1,
                         self._worker_shutdown.state[0], self._worker_shutdown.state[1], self._worker_shutdown.state[3])
                     if not read_ok or code.value != 0:
@@ -321,7 +322,7 @@ class Client:
             launched = inspect_peer(kernel.GetProcessId(child))
             self._process_identities["launcher"] = launched
             self.failure_stage = "pipe_connect"
-            pipe.connect(time.monotonic() + 10, self.cancel)
+            pipe.connect(suspend_clock.now() + 10, self.cancel)
             self.failure_stage = "peer_identity"
             expected, self._worker_process = bind_worker_peer(pipe, launched, parent)
             self._process_identities["worker"] = expected
@@ -335,10 +336,10 @@ class Client:
             pipe.write(outgoing.encode("start", mode=self.mode, **voice_fields))
             started = True
             last_heartbeat, last_peer = 0.0, 0.0
-            ready_deadline = time.monotonic() + 30
+            ready_deadline = suspend_clock.now() + 30
             stop_deadline = None
             while True:
-                now = time.monotonic()
+                now = suspend_clock.now()
                 if self.cancel.is_set() and not outgoing.closed:
                     pipe.write(outgoing.encode("stop"))
                     # A fallback symbol lookup is bounded to 18 seconds; let
@@ -372,7 +373,7 @@ class Client:
                         if self._restart_host is not None:
                             self._restart_host(self)
                             self._restart_host = None
-                        ready_deadline = time.monotonic() + 30
+                        ready_deadline = suspend_clock.now() + 30
                         logging.getLogger("ovb_rc003").info("Chromecast receiver session restarted: run=%s", generation[:12])
                 if now - last_peer >= 1:
                     verify_peer(inspect_peer(pid), expected)
@@ -397,7 +398,7 @@ class Client:
                                 and record.get("step") == "gadget_fallback"
                                 and record.get("state") == "begin"):
                             self._gadget_fallback_seen.set()
-                            ready_deadline = max(ready_deadline, time.monotonic() + 40)
+                            ready_deadline = max(ready_deadline, suspend_clock.now() + 40)
                         self._observe_evidence(event)
                     elif event["type"] == "ready":
                         if self.failed.is_set():
@@ -408,7 +409,7 @@ class Client:
                         diagnostics.request(self.identity.entity, "ready")
                     elif event["type"] == "edge":
                         self._count_input("received")
-                        age = time.monotonic() - event["time"]
+                        age = suspend_clock.now() - event["time"]
                         if not -.1 <= age <= 1:
                             self._count_input("stale")
                             if self.mode != "run":
@@ -437,7 +438,7 @@ class Client:
                     elif event["type"] == "voice":
                         if self.failed.is_set():
                             continue
-                        if not -.1 <= time.monotonic() - event["time"] <= 1:
+                        if not -.1 <= suspend_clock.now() - event["time"] <= 1:
                             if self.mode != "run":
                                 raise PipeError("capture_lost")
                             self._lose_input("capture_lost")
@@ -464,7 +465,7 @@ class Client:
                         break
                     else:
                         terminal, self.reason = True, event["reason"]
-                        self._terminal_type, self._terminal_at = event["type"], time.monotonic()
+                        self._terminal_type, self._terminal_at = event["type"], suspend_clock.now()
                         logging.getLogger("ovb_rc003").info(
                             "Chromecast terminal: type=%s reason=%s", event["type"], self.reason,
                             extra={"failure_key": f"chromecast:terminal:{self.reason}"
@@ -472,7 +473,7 @@ class Client:
                         return
                 # Read already queued startup evidence before deciding whether
                 # the normal readiness budget has expired.
-                if not self.ready.is_set() and not self.failed.is_set() and time.monotonic() > ready_deadline:
+                if not self.ready.is_set() and not self.failed.is_set() and suspend_clock.now() > ready_deadline:
                     raise PipeError("source_unconfirmed")
                 self._log_input_flow()
                 time.sleep(.01)
@@ -503,7 +504,7 @@ class Client:
                 self._lose_input(self.reason)
             except Exception:
                 pass
-            edge = incoming.cancel_pending(time.monotonic())
+            edge = incoming.cancel_pending(suspend_clock.now())
             if edge:
                 try:
                     self._deliver(edge)

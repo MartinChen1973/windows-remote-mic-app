@@ -6,10 +6,9 @@ import hashlib
 import queue
 import re
 import threading
-import time
 import uuid
 
-from . import raw_input_windows, remote_selection
+from . import raw_input_windows, remote_selection, suspend_clock
 from .chromecast_pipe_windows import PipeError
 from .chromecast_voice import GET_CAPABILITIES
 
@@ -159,7 +158,7 @@ class SelectedDevice:
             first_status=-1, first_handle=-1, first_error_type="none")
         row = dict(kind="voice_cleanup", attempt=max(1, self._cleanup_attempt), cycle=self._cleanup_cycle,
             step=step, state=state, outcome=outcome, duration_ms=0 if started is None else
-                max(0, min(2147483647, round((time.monotonic() - started) * 1000))),
+                max(0, min(2147483647, round((suspend_clock.now() - started) * 1000))),
             hresult=hresult, status=status, handle=handle, error_type=error_type,
             previous_failed=int(self._cleanup_previous_failed), current_failed=int(self._cleanup_current_failed),
             remaining_services=min(65535, len(self._voice_services)), session_owned=int(self.voice_session is not None),
@@ -195,7 +194,7 @@ class SelectedDevice:
 
     @contextmanager
     def _cleanup_operation(self, step, *, handle=-1):
-        started = time.monotonic()
+        started = suspend_clock.now()
         result = {"status": -1}
         self._cleanup_emit(step, "begin", handle=handle)
         try:
@@ -299,7 +298,7 @@ class SelectedDevice:
         code = getattr(error, "winerror", None)
         row = dict(kind="voice_link", step=step, outcome=outcome,
             duration_ms=0 if started is None else max(0, min(2147483647,
-                round((time.monotonic() - started) * 1000))),
+                round((suspend_clock.now() - started) * 1000))),
             hresult=(code & 0xffffffff) if type(code) is int else -1,
             connected=self._connection_status(),
             device_access=read(lambda: self.device.device_access_information.current_status, 3),
@@ -314,7 +313,7 @@ class SelectedDevice:
 
     async def _start_voice_session(self):
         from winrt.windows.devices.bluetooth.genericattributeprofile import GattSession
-        started, outcome, error = time.monotonic(), "success", None
+        started, outcome, error = suspend_clock.now(), "success", None
         try:
             self.voice_session = await asyncio.wait_for(
                 GattSession.from_device_id_async(self.device.bluetooth_device_id), _VOICE_SESSION_TIMEOUT)
@@ -332,7 +331,7 @@ class SelectedDevice:
 
     async def _wait_voice_session(self):
         from winrt.windows.devices.bluetooth.genericattributeprofile import GattSessionStatus
-        started, outcome, error = time.monotonic(), "success", None
+        started, outcome, error = suspend_clock.now(), "success", None
         try:
             async with asyncio.timeout(_VOICE_SESSION_TIMEOUT):
                 while self.voice_session.session_status != GattSessionStatus.ACTIVE:
@@ -350,7 +349,7 @@ class SelectedDevice:
 
     async def _voice_query(self, step, call, *, cached=False, timeout=5):
         """Keep only bounded interface metadata, never values or exception text."""
-        started = time.monotonic()
+        started = suspend_clock.now()
         row = dict(step=step, cache="cached" if cached else "live", duration_ms=0,
                    connected_before=self._connection_status(), connected_after=-1,
                    outcome="exception", status=-1, protocol_error=-1, hresult=-1, item_count=0, items=[])
@@ -378,7 +377,7 @@ class SelectedDevice:
             raise
         finally:
             row["connected_after"] = self._connection_status()
-            row["duration_ms"] = max(0, min(2147483647, round((time.monotonic() - started) * 1000)))
+            row["duration_ms"] = max(0, min(2147483647, round((suspend_clock.now() - started) * 1000)))
             try:
                 items = list(getattr(result, step, ())) if step in {"services", "characteristics"} else []
                 row["item_count"] = min(len(items), 65535)
@@ -523,7 +522,7 @@ class SelectedDevice:
                         value = bytes(args.characteristic_value)
                         if len(value) > 512:
                             raise ValueError("oversized voice notification")
-                        self._voice_events.put_nowait((attribute, value, time.monotonic()))
+                        self._voice_events.put_nowait((attribute, value, suspend_clock.now()))
                     except Exception:
                         self._voice_overflow.set()
 
@@ -557,6 +556,22 @@ class SelectedDevice:
                 break
         return events
 
+    def _link_is_lost(self):
+        """Report whether the GATT link is already gone, not merely slow.
+
+        After a resume the radio is re-attaching, so a teardown write reports
+        Unreachable/timeout even though the link (and with it every
+        subscription) is already down. Treating that as a retained resource
+        would refuse recovery for a device that no longer needs cleanup.
+        """
+        if self.device is None:
+            return True
+        try:
+            from winrt.windows.devices.bluetooth import BluetoothConnectionStatus
+            return self.device.connection_status != BluetoothConnectionStatus.CONNECTED
+        except Exception:
+            return False
+
     async def close_voice(self):
         self._cleanup_begin()
         self._voice_open = False
@@ -576,15 +591,30 @@ class SelectedDevice:
                         GattClientCharacteristicConfigurationDescriptorValue as CccdValue,
                     )
                 for characteristic in subscribed:
+                    first_failure = self._cleanup_first
+                    current_failed = self._cleanup_current_failed
                     try:
                         with self._cleanup_operation("subscription_disable", handle=self._cleanup_handle(characteristic)) as evidence:
                             status = await asyncio.wait_for(
                                 characteristic.write_client_characteristic_configuration_descriptor_async(CccdValue.NONE), 3)
                             evidence["status"] = int(status)
                         if int(status) != 0:
-                            failed = True
+                            # Unreachable means the link carrying the CCCD is gone:
+                            # the subscription cannot outlive it, so this is not a
+                            # resource this run still owns.
+                            if self._link_is_lost():
+                                self._cleanup_current_failed = current_failed
+                                self._cleanup_first = first_failure
+                            else:
+                                failed = True
+                    except asyncio.CancelledError:
+                        raise
                     except Exception:
-                        failed = True
+                        if self._link_is_lost():
+                            self._cleanup_current_failed = current_failed
+                            self._cleanup_first = first_failure
+                        else:
+                            failed = True
         except asyncio.CancelledError:
             failed = True
             raise

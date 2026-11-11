@@ -19,10 +19,9 @@ import re
 import struct
 import subprocess
 import threading
-import time
 import uuid
 
-from . import remote_layout, remote_selection
+from . import remote_layout, remote_selection, suspend_clock
 from .chromecast_observation import HID_CONSTRUCTOR_PROBE_BYTES, HID_COUNTS, HID_ERROR_TYPES, valid_record
 
 
@@ -74,7 +73,7 @@ def startup_record(step, state, *, started=None, error=None, script_line=-1, hos
         cause = getattr(error, "__cause__", None) or (None if getattr(error, '__suppress_context__', False)
                                                      else getattr(error, '__context__', None))
         row = dict(kind="hid_startup", elapsed_ms=0, step=step, state=state,
-            duration_ms=0 if started is None else min(2147483647, max(0, round((time.monotonic() - started) * 1000))),
+            duration_ms=0 if started is None else min(2147483647, max(0, round((suspend_clock.now() - started) * 1000))),
             error_type=error_type(error), cause_type=error_type(cause), native_code=code(error), cause_code=code(cause),
             host_pid=host_pid if type(host_pid) is int else -1,
             script_line=script_line if type(script_line) is int and 0 <= script_line <= 65535 else -1,
@@ -88,7 +87,7 @@ def startup_record(step, state, *, started=None, error=None, script_line=-1, hos
 def _trace_step(name):
     # Context is local to this startup thread. Runtime source polling stays quiet.
     sink = _startup_sink.get()
-    started = time.monotonic()
+    started = suspend_clock.now()
     details = {}
     def emit(state, error=None):
         if sink is not None:
@@ -629,7 +628,7 @@ class HidTap:
 
     @contextmanager
     def _step(self, name):
-        started = time.monotonic()
+        started = suspend_clock.now()
         details = {}
         self._startup_record(name, "begin")
         try:
@@ -722,9 +721,9 @@ class HidTap:
                     self._store_diagnostic(item)
                     return
                 if item.get("kind") == "report":
-                    self._put(("report", item.get("value"), time.monotonic()))
+                    self._put(("report", item.get("value"), suspend_clock.now()))
                 elif item.get("kind") == "hook_ready":
-                    self._put(("hook_ready", "", time.monotonic()))
+                    self._put(("hook_ready", "", suspend_clock.now()))
                 elif item.get("kind") == "error":
                     self._put(("error", item.get("reason", "hid_callback_failed"), 0.0))
 
@@ -838,7 +837,7 @@ class HidTap:
                 except Exception:
                     pass
         if self.script is not None:
-            started = time.monotonic()
+            started = suspend_clock.now()
             report("hid_script_unload", "begin")
             try:
                 invoke(self.script, "unload")
@@ -851,7 +850,7 @@ class HidTap:
                 report("hid_script_unload", "done")
             self.script = None
         if self.session is not None:
-            started = time.monotonic()
+            started = suspend_clock.now()
             report("hid_session_detach", "begin")
             try:
                 invoke(self.session, "detach")
@@ -864,7 +863,7 @@ class HidTap:
                 report("hid_session_detach", "done")
             self.session = None
         if self._gadget_device is not None:
-            started = time.monotonic()
+            started = suspend_clock.now()
             try:
                 import frida
                 invoke(frida.get_device_manager(), "remove_remote_device", self._gadget_device[1])

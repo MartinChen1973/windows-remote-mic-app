@@ -9,6 +9,7 @@ from unittest import mock
 import uuid
 
 from ovb_rc003 import chromecast_hid_worker as worker
+from ovb_rc003 import suspend_clock
 from ovb_rc003 import chromecast_device_windows as device
 from ovb_rc003.chromecast_buttons import HidButtonReceiver
 from ovb_rc003.chromecast_channel import Channel, SessionIdentity
@@ -48,7 +49,7 @@ class HidWorkerTests(unittest.IsolatedAsyncioTestCase):
         commands, events = Channel(identity, commands=True), Channel(identity, commands=False)
         inbox = deque([commands.encode("start", mode="run")])
         received = []
-        reports = deque([("hook_ready", "", time.monotonic())])
+        reports = deque([("hook_ready", "", suspend_clock.now())])
         reports.append(("hid_flow", dict(kind="hid_flow", elapsed_ms=0, sample_ms=2000,
             counts=dict.fromkeys(HID_COUNTS, 0), lengths=[], copy_buffer_lengths=[],
             copy_hook_state="ready", copy_scope="selected_host_unattributed",
@@ -81,8 +82,8 @@ class HidWorkerTests(unittest.IsolatedAsyncioTestCase):
             event = events.decode(raw)
             received.append(event)
             if event["type"] == "ready":
-                reports.extend((("report", "0300000000000000", time.monotonic()),
-                                ("report", "0000000000000000", time.monotonic())))
+                reports.extend((("report", "0300000000000000", suspend_clock.now()),
+                                ("report", "0000000000000000", suspend_clock.now())))
             if event.get("action") == "up":
                 inbox.append(commands.encode("stop"))
 
@@ -114,7 +115,7 @@ class HidWorkerTests(unittest.IsolatedAsyncioTestCase):
         identity = SessionIdentity.create(ENTITY)
         commands, events = Channel(identity, commands=True), Channel(identity, commands=False)
         inbox = deque([commands.encode("start", mode="run")])
-        reports = deque([("hook_ready", "", time.monotonic())])
+        reports = deque([("hook_ready", "", suspend_clock.now())])
         target = SimpleNamespace(changed=threading.Event(), open=mock.AsyncMock(),
                                  close_voice=mock.AsyncMock(side_effect=PipeError("cleanup_failed")),
                                  close=mock.Mock())
@@ -187,7 +188,7 @@ class HidWorkerTests(unittest.IsolatedAsyncioTestCase):
         if cancel_input:
             inbox.extend(commands.encode("voice_cancel", input_epoch=e) for e in (2, 1))
         received = []
-        reports = deque([("hook_ready", "", time.monotonic())])
+        reports = deque([("hook_ready", "", suspend_clock.now())])
         notifications = deque()
         requests = 0
         adapters = []
@@ -222,14 +223,14 @@ class HidWorkerTests(unittest.IsolatedAsyncioTestCase):
             if command == GET_CAPABILITIES:
                 requests += 1
                 if requests == 1:
-                    reports.extend(("report", value, time.monotonic()) for value in
+                    reports.extend(("report", value, suspend_clock.now()) for value in
                                    ("0300000000000000", "0000000000000000"))
                 if requests == 2 and cancel_kind == "stop":
                     inbox.append(commands.encode("stop"))
                 elif requests == 2 and cancel_kind == "disconnect":
                     target.changed.set()
                 elif requests == reply_at:
-                    notifications.append((0x3F, bytes((11, 1, 0, 2, 3, 0, 160, 0, 0)), time.monotonic()))
+                    notifications.append((0x3F, bytes((11, 1, 0, 2, 3, 0, 160, 0, 0)), suspend_clock.now()))
 
         def poll_voice():
             result = list(notifications)
@@ -283,7 +284,7 @@ class DirectVoiceTests(unittest.IsolatedAsyncioTestCase):
                 break
             await asyncio.sleep(.01)
         target.write_voice.assert_awaited_once_with(GET_CAPABILITIES)
-        receiver.notification(0x3F, bytes((11, 1, 0, 2, 3, 0, 160, 0, 0)), time.monotonic())
+        receiver.notification(0x3F, bytes((11, 1, 0, 2, 3, 0, 160, 0, 0)), suspend_clock.now())
         await asyncio.wait_for(task, 2)
         target.open_voice.assert_awaited_once_with(direct=True)
         self.assertEqual([event[0:3] for event in observed if event[0] == "available"],

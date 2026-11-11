@@ -9,6 +9,7 @@ from unittest import mock
 
 from ovb_rc003 import chromecast_hid_tap_windows as tap
 from ovb_rc003 import chromecast_hid_worker as worker
+from ovb_rc003 import suspend_clock
 from ovb_rc003.chromecast_channel import Channel, ChannelError, SessionIdentity
 from ovb_rc003.chromecast_observation import HID_CONSTRUCTOR_PROBE_BYTES, Observation, valid_record
 
@@ -39,7 +40,7 @@ class StartupEvidenceTests(unittest.IsolatedAsyncioTestCase):
                     rows.append(row)
                     if row.get("record", {}).get("step") == "wait_start":
                         gate.set()
-                with mock.patch.object(worker, "time", SimpleNamespace(monotonic=lambda:next(clock))), \
+                with mock.patch.object(suspend_clock, "now", side_effect=lambda: next(clock)), \
                      mock.patch.object(worker, "ParentLease", return_value=SimpleNamespace(alive=lambda now:True, renew=lambda now:None)), \
                      mock.patch.object(worker, "HidTap", return_value=instance), \
                      mock.patch.object(worker, "SelectedDevice", return_value=target), \

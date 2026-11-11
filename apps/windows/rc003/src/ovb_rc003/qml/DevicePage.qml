@@ -186,9 +186,11 @@ Item {
                 return "authorization_cancelled"
             if (!SettingsController.bridgeRunning)
                 return "service_stopped"
-            return SettingsController.buttonReceiverUsable
-                ? "ready" : (valueIn(SettingsController.rawInputState, ["starting", "chromecast_recovering"])
-                    ? "checking" : "error")
+            if (SettingsController.buttonReceiverUsable)
+                return "ready"
+            if (valueIn(SettingsController.rawInputState, ["starting", "chromecast_recovering"]))
+                return "checking"
+            return "error"
         }
         if (SettingsController.hidHelperRepairBusy)
             return "checking"

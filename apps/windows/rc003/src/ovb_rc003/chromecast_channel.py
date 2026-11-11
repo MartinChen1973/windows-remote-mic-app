@@ -24,8 +24,20 @@ VERSION = 29
 MAX_MESSAGE_BYTES = 2048
 HEARTBEAT_TIMEOUT = 10.0
 RECOVERY_DELAYS = (1.0, 3.0, 5.0)
+# A resume from hibernate takes the radio and the HID-over-GATT host tens of
+# seconds to re-attach, so the same bounded retry ladder is spread over a
+# longer schedule after a detected resume. The attempt count is unchanged;
+# only the spacing grows, and the worker still refuses to retry over resources
+# it has not released.
+RESUME_RECOVERY_DELAYS = (5.0, 15.0, 30.0)
 RECOVERABLE_RECEIVE_REASONS = frozenset({
     "capture_lost", "hid_source_unconfirmed", "hid_capture_failed", "peer_lost", "radio_ambiguous",
+    # Windows re-exposes the HID-over-GATT collection only once the radio and
+    # the host process have re-attached, which after a resume is later than the
+    # worker's startup deadline. The cause is transient by definition - the
+    # device is still paired and selected - so it earns a bounded retry instead
+    # of a terminal failure that would demand a manual service restart.
+    "input_interface_unavailable",
 })
 _BUTTONS = frozenset(remote_layout.CHROMECAST_REPORT_CODES)
 _BASE = frozenset({"version", "entity", "generation", "token", "seq", "type"})
@@ -408,6 +420,12 @@ class ParentLease:
 
     Only authenticated, validated control frames may renew this lease. Every
     native capture timeout checks it; expiration stops only this run's session.
+
+    Callers must supply ``suspend_clock.now()``, not ``time.monotonic()``.
+    The lease is a liveness budget: it must measure time both processes were
+    actually running. ``time.monotonic()`` keeps counting through suspend and
+    hibernate, so a resume would expire the lease before the parent's first
+    heartbeat could be drained, and the worker would end its own run.
     """
     def __init__(self, now):
         if not _finite_time(now):

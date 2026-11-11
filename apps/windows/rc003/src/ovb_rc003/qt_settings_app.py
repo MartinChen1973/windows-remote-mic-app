@@ -137,6 +137,7 @@ from . import (
     shell_targets,
     single_instance,
     startup_windows,
+    suspend_clock,
     vb_cable_bundle,
     voice_hotkey_sync_windows,
     voice_program_manager,
@@ -1526,6 +1527,8 @@ def _load_qt_classes() -> dict:
             self._bridge_restart_recommended = False
             self._output_endpoint_restart_required = False
             self._bridge_recovery_attempted = False
+            self._bridge_resume_recovery_attempted = False
+            self._resume_watch = suspend_clock.ResumeDetector()
             self._bridge_recovery_running = False
             self._legacy_bridge_launch_handoff_attempted = False
             self._bridge_reconnect_available = False
@@ -2976,6 +2979,7 @@ def _load_qt_classes() -> dict:
                     schedule_recovery=True,
                     status_missing_timed_out=status_missing_timed_out,
                 )
+                self._schedule_resume_bridge_recovery()
                 reconnect_available = self._can_reconnect_bridge_now(runtime_status)
                 self._set_bridge_reconnect_available(reconnect_available)
                 if connected or not reconnect_available:
@@ -7937,6 +7941,54 @@ def _load_qt_classes() -> dict:
                 self._set_bridge_restart_recommended(False)
                 return
             self._begin_bridge_restart(automatic=True)
+
+        def _schedule_resume_bridge_recovery(self) -> None:
+            """Recover once after a resume whose receiver could not re-attach.
+
+            A resume is a hardware event outside the receiver's control, so the
+            user should not have to press "重启服务" to get the radio back. The
+            restart reuses this process and only proceeds when the helper is
+            already elevated; otherwise it would raise an unexpected UAC prompt
+            and the existing manual action is left in place.
+            """
+            if (
+                self._bridge_resume_recovery_attempted
+                or self._bridge_recovery_attempted
+                or self._bridge_recovery_running
+                or not self._bridge_running
+                or self.configurationReadOnly
+                or self._application_exit_intent.is_set()
+                or self._maintenance_exit_pending
+            ):
+                return
+            if not self._resume_watch.resumed():
+                return
+            status = bridge_runtime_status.read_status(self._config_root)
+            if status is None or status.voice_active:
+                return
+            if bridge_runtime_status.runtime_identity_matches(
+                status,
+                self._current_runtime_identity,
+            ) is not True:
+                return
+            if not self._runtime_status_requires_restart(status):
+                return
+            if self._hid_helper_process_elevated is not True:
+                # Never turn a resume into an unrequested UAC prompt; the
+                # existing manual "重启服务" action stays visible instead.
+                self._set_launch_status("恢复需要管理员权限；请点击“重启服务”。")
+                return
+            self._bridge_resume_recovery_attempted = True
+            self._set_launch_status("检测到睡眠唤醒；正在自动恢复遥控器服务…")
+            QTimer.singleShot(0, self._start_resume_bridge_recovery)
+
+        def _start_resume_bridge_recovery(self) -> None:
+            if (
+                self._bridge_resume_recovery_attempted
+                and not self._bridge_recovery_running
+                and self._bridge_running
+            ):
+                self._begin_bridge_restart(automatic=True)
 
         @Slot()
         def restartBridge(self) -> None:

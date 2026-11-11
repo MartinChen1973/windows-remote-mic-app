@@ -14,6 +14,7 @@ from winrt.windows.devices.bluetooth.genericattributeprofile import GattCharacte
 from ovb_rc003 import chromecast_device_windows as device
 from ovb_rc003 import chromecast_hid_worker as worker
 from ovb_rc003 import chromecast_voice_receiver as adapter
+from ovb_rc003 import suspend_clock
 from ovb_rc003.chromecast_channel import Channel, ChannelError, SessionIdentity
 from ovb_rc003.chromecast_observation import Observation, valid_record
 from ovb_rc003.chromecast_pipe_windows import PipeError
@@ -653,12 +654,12 @@ class WakeRetryTests(unittest.IsolatedAsyncioTestCase):
                                  voice_retryable=True, voice_attributes={})
         with mock.patch.object(adapter.config, "load_config", return_value={}):
             receiver = adapter.VoiceReceiver(target, lambda *args: None, direct_notifications=True)
-        receiver.note_activity(time.monotonic() - 1)
+        receiver.note_activity(suspend_clock.now() - 1)
         await receiver.open()
         self.assertFalse(receiver.retry_ready())
-        with mock.patch.object(adapter.time, "monotonic", return_value=receiver._open_finished + 1.01):
+        with mock.patch.object(adapter.suspend_clock, "now", return_value=receiver._open_finished + 1.01):
             self.assertTrue(receiver.retry_ready())
-        receiver.note_activity(time.monotonic())
+        receiver.note_activity(suspend_clock.now())
         self.assertTrue(receiver.retry_ready())
         target.voice_retryable = False
         self.assertFalse(receiver.retry_ready())
@@ -725,7 +726,7 @@ class WakeRetryTests(unittest.IsolatedAsyncioTestCase):
                         elif outcome == "stop_wait":
                             inbox.append(commands.encode("stop"))
                         elif outcome in ("ready", "failed", "cancel", "last_ready"):
-                            reports.extend(("report", value, time.monotonic()) for value in
+                            reports.extend(("report", value, suspend_clock.now()) for value in
                                 ("0600000000000000", "0000000000000000"))
 
                 target = SimpleNamespace(changed=threading.Event(), open=mock.AsyncMock(),
@@ -758,14 +759,14 @@ class WakeRetryTests(unittest.IsolatedAsyncioTestCase):
         for attempt, delay in ((1, 1.0), (2, 3.0), (3, 5.0)):
             await receiver.open()
             self.assertEqual(receiver._open_attempts, attempt)
-            with mock.patch.object(adapter.time, "monotonic", return_value=receiver._open_finished + delay - .001):
+            with mock.patch.object(adapter.suspend_clock, "now", return_value=receiver._open_finished + delay - .001):
                 self.assertFalse(receiver.retry_ready())
-            with mock.patch.object(adapter.time, "monotonic", return_value=receiver._open_finished + delay):
+            with mock.patch.object(adapter.suspend_clock, "now", return_value=receiver._open_finished + delay):
                 self.assertTrue(receiver.retry_ready())
         await receiver.open()
-        with mock.patch.object(adapter.time, "monotonic", return_value=receiver._open_finished + 10000):
+        with mock.patch.object(adapter.suspend_clock, "now", return_value=receiver._open_finished + 10000):
             self.assertFalse(receiver.retry_ready())
-        receiver.note_activity(time.monotonic())
+        receiver.note_activity(suspend_clock.now())
         self.assertTrue(receiver.retry_ready())
         await receiver.open()
         receiver.note_activity(time.monotonic())

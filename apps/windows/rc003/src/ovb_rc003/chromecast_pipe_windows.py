@@ -12,9 +12,8 @@ import os
 from pathlib import Path
 import subprocess
 import sys
-import time
 
-from . import dev_session, hid_elevation_windows
+from . import dev_session, hid_elevation_windows, suspend_clock
 from .chromecast_channel import SessionIdentity, MAX_MESSAGE_BYTES
 
 WORKER_FLAG = "--chromecast-worker"
@@ -222,7 +221,10 @@ class Pipe:
             raise PipeError("pipe_open_failed")
 
     def connect(self, deadline, cancel):
-        while not cancel.is_set() and time.monotonic() < deadline:
+        # The deadline travels from the caller, so this loop must read the same
+        # clock base the caller used. A mismatched base makes the deadline look
+        # long expired and cancels an otherwise healthy connection.
+        while not cancel.is_set() and suspend_clock.now() < deadline:
             if self.server:
                 connected = self.k.ConnectNamedPipe(self.handle, None)
                 error = 0 if connected else C.get_last_error()

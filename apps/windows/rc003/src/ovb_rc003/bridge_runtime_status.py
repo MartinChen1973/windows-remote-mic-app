@@ -44,6 +44,28 @@ FAILED_RAW_INPUT_STATES = frozenset(
         "stopped",
     }
 )
+# The Chromecast receiver publishes its own terminal causes as
+# ``chromecast_<reason>``. Only causes that no longer retry belong here: the
+# transient ``chromecast_starting``/``chromecast_recovering`` states must stay
+# recoverable, or a resume would report a permanent failure while the receiver
+# is still re-attaching.
+CHROMECAST_TERMINAL_STATES = frozenset(
+    {
+        "chromecast_peer_lost",
+        "chromecast_capture_lost",
+        "chromecast_capture_failed",
+        "chromecast_hid_source_unconfirmed",
+        "chromecast_hid_symbol_unavailable",
+        "chromecast_hid_capture_failed",
+        "chromecast_input_interface_unavailable",
+        "chromecast_input_identity_unconfirmed",
+        "chromecast_input_payload_unavailable",
+        "chromecast_cleanup_failed",
+        "chromecast_radio_ambiguous",
+        "chromecast_source_unconfirmed",
+        "chromecast_unsupported_layout",
+    }
+)
 FAILED_HID_TAP_STATES = frozenset(
     {
         "disabled_non_windows",
@@ -213,8 +235,8 @@ def runtime_identity_matches(
 def input_channels_failed(status: BridgeRuntimeStatus) -> bool:
     return (
         status.raw_input_state in FAILED_RAW_INPUT_STATES
-        and status.hid_tap_state in FAILED_HID_TAP_STATES
-    )
+        or status.raw_input_state in CHROMECAST_TERMINAL_STATES
+    ) and status.hid_tap_state in FAILED_HID_TAP_STATES
 
 
 def input_channels_ready(status: BridgeRuntimeStatus) -> bool:

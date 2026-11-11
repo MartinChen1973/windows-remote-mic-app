@@ -303,6 +303,7 @@ hiddenimports = [
     "ovb_rc003.chromecast_wetype_finish",
     "ovb_rc003.chromecast_wetype_toggle",
     "ovb_rc003.chromecast_worker",
+    "ovb_rc003.suspend_clock",  # Chromecast liveness budgets exclude suspend time
     "ovb_rc003.single_instance",  # XRBM-021: imported lazily inside
     # __main__.py's _run_bridge(), same as the other lazily-imported
     # modules above.

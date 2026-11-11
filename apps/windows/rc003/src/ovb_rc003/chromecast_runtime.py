@@ -10,8 +10,8 @@ import threading
 import time
 from dataclasses import dataclass
 from typing import Callable, Any
-from . import bridge_runtime_status, diagnostic_trace
-from .chromecast_channel import RECOVERY_DELAYS
+from . import bridge_runtime_status, diagnostic_trace, suspend_clock
+from .chromecast_channel import RECOVERY_DELAYS, RESUME_RECOVERY_DELAYS, RECOVERABLE_RECEIVE_REASONS
 
 
 @dataclass(frozen=True)
@@ -47,12 +47,25 @@ class ChromecastRuntime:
     def cancel_input(self):
         self.services.disable_input()
         if self.client is not None and not self.stopping.is_set():
-            self.services.set_input_state(raw_input_state="chromecast_" + self.client.reason,
+            self.services.set_input_state(raw_input_state=self.loss_state(),
                                           hid_tap_state="failed")
             self.services.publish_status(bridge_runtime_status.BridgeConnectionState.WAITING_FOR_DEVICE)
         if self.voice_host is not None:
             self.voice_host.request_stop()
         self.services.cancel_mappings()
+
+    def loss_state(self):
+        """Name the input state for the loss that just withdrew readiness.
+
+        A loss the worker can still retry is reported as recovering, so the
+        device page does not claim a permanent failure - and does not offer a
+        restart - while the receiver is already re-attaching. The terminal
+        cause is published separately once the run actually ends.
+        """
+        reason = self.client.reason if self.client is not None else "capture_failed"
+        if reason in RECOVERABLE_RECEIVE_REASONS:
+            return "chromecast_recovering"
+        return "chromecast_" + reason
 
     def receiver_ready(self):
         if not self.stopping.is_set():
@@ -84,7 +97,16 @@ class ChromecastRuntime:
             await asyncio.to_thread(self.client.start, cancel_event=self.stopping)
             restarted_generation = None
             recoveries = 0
+            resume_watch = suspend_clock.ResumeDetector()
+            resume_delays = False
             while not self.stopping.is_set() and not self.client.finished.is_set():
+                if resume_watch.resumed():
+                    # The radio and the HID-over-GATT host need time to re-attach.
+                    # Spread the same bounded ladder over a longer schedule after
+                    # a resume; the attempt count and cleanup gates are unchanged.
+                    resume_delays = True
+                    self.services.logger.info(
+                        "Chromecast resume detected: recovery spacing extended")
                 retry_ready = getattr(self.client, "retry_ready", None)
                 if (retry_ready is not None and retry_ready.is_set()
                         and self.client.identity.generation != restarted_generation):
@@ -100,7 +122,8 @@ class ChromecastRuntime:
                         continue
                     self.services.set_input_state(raw_input_state="chromecast_recovering", hid_tap_state="starting")
                     self.services.publish_status(bridge_runtime_status.BridgeConnectionState.CONNECTING)
-                    await asyncio.sleep(RECOVERY_DELAYS[min(recoveries, len(RECOVERY_DELAYS) - 1)])
+                    delays = RESUME_RECOVERY_DELAYS if resume_delays else RECOVERY_DELAYS
+                    await asyncio.sleep(delays[min(recoveries, len(delays) - 1)])
                     if self.stopping.is_set() or self.client.finished.is_set():
                         break
                     self.voice_host = self.services.create_voice_host()

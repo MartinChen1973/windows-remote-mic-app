@@ -6,8 +6,7 @@ GATT characteristic. Failed voice discovery does not disable ordinary buttons.
 from __future__ import annotations
 import asyncio
 from collections import deque
-import time
-from . import config
+from . import config, suspend_clock
 from .diagnostic_errors import error_detail
 from .chromecast_voice import (Recording, GET_CAPABILITIES, CAPABILITIES_TIMEOUT, CAPABILITIES_MAX_ATTEMPTS,
                               VOICE_OPEN_RETRY_DELAYS, VOICE_OPEN_MAX_ATTEMPTS, supported_capabilities)
@@ -61,7 +60,7 @@ class VoiceReceiver:
             from .chromecast_observation import HID_ERROR_TYPES
             self.observation.voice_command(dict(
                 attempt=attempt, opcode=value[0], stream=value[1] if len(value) > 1 else -1,
-                state=state, duration_ms=max(0, round((time.monotonic() - started) * 1000)),
+                state=state, duration_ms=max(0, round((suspend_clock.now() - started) * 1000)),
                 error_type=kind if kind in HID_ERROR_TYPES else 'other',
                 error_family=detail.get('error_family', 'unclassified'),
                 native_code=detail.get('hresult', detail.get('winerror', detail.get('reported_code', -1))) & 0xffffffff
@@ -72,7 +71,7 @@ class VoiceReceiver:
 
     async def _negotiate(self):
         self._caps_waiting = True
-        self._caps_requested_at = time.monotonic()
+        self._caps_requested_at = suspend_clock.now()
         try:
             # Keep the proven connection/subscriptions while retrying only a
             # missing CAPS reply. A late reply to an earlier identical request
@@ -82,7 +81,7 @@ class VoiceReceiver:
                     break
                 self._stage("voice_caps_request")
                 command = GET_CAPABILITIES
-                started = time.monotonic()
+                started = suspend_clock.now()
                 self._observe_command(command, 0, 'begin', started)
                 try:
                     await self.device.write_voice(command)
@@ -118,7 +117,7 @@ class VoiceReceiver:
 
     async def open(self):
         self._open_attempts += 1
-        self._open_started = time.monotonic()
+        self._open_started = suspend_clock.now()
         self._open_retryable = False
         self._caps_event.clear()
         self.capabilities = None
@@ -154,16 +153,16 @@ class VoiceReceiver:
                         self.observation.voice_link(row, self._open_attempts)
                     else:
                         self.observation.voice_query(row, self._open_attempts)
-            self._open_finished = time.monotonic()
+            self._open_finished = suspend_clock.now()
         if self.observation:
             details = getattr(self.device, "voice_evidence", None)
             if details:
                 self.observation.gatt(details)
             self.observation.stage("voice_ready" if self.available else "voice_unavailable")
-        self.emit("available", 0, "ready" if self.available else "unavailable", time.monotonic())
+        self.emit("available", 0, "ready" if self.available else "unavailable", suspend_clock.now())
         if self.available:
             handles = {kind: handle for handle, kind in self.device.voice_attributes.items()}
-            self.emit("probe", 0, f"layout/{handles['audio']:04x}/{handles['control']:04x}", time.monotonic())
+            self.emit("probe", 0, f"layout/{handles['audio']:04x}/{handles['control']:04x}", suspend_clock.now())
             # CAPS and START may arrive in the same capture batch, before the
             # asynchronous write completes. Replay only selected-device packets
             # received AFTER valid CAPS; bounded RAM only, never a disk recording.
@@ -187,7 +186,7 @@ class VoiceReceiver:
         fresh_activity = self._last_activity >= self._open_started
         if self._open_attempts <= len(VOICE_OPEN_RETRY_DELAYS):
             delay = VOICE_OPEN_RETRY_DELAYS[self._open_attempts - 1]
-            return fresh_activity or time.monotonic() >= self._open_finished + delay
+            return fresh_activity or suspend_clock.now() >= self._open_finished + delay
         # Preserve the original wake-by-button recovery after the timed budget,
         # but never turn repeated button presses into an infinite retry loop.
         return fresh_activity
@@ -202,11 +201,11 @@ class VoiceReceiver:
                 data = effect.value.hex() if isinstance(effect.value, bytes) else effect.value or ""
                 if effect.kind == "host_start":
                     data = f"epoch/{self.input_epoch}"
-                self.emit(effect.kind, effect.attempt, data, time.monotonic())
+                self.emit(effect.kind, effect.attempt, data, suspend_clock.now())
                 if effect.kind == "host_start" and self.capabilities:
                     # Each host attempt creates a new decoder; apply negotiated
                     # frame size before its START/audio, including toggle mode.
-                    self.emit("control", effect.attempt, self.capabilities.hex(), time.monotonic())
+                    self.emit("control", effect.attempt, self.capabilities.hex(), suspend_clock.now())
                 if effect.kind == "state" and effect.attempt > 0:
                     gate = self.gate
                     if data == "starting":
@@ -220,7 +219,7 @@ class VoiceReceiver:
                     self.emit("lifecycle", effect.attempt,
                               f"{data}/{gate.mode}/{gate.limit}/{self.recording_elapsed_ms}/"
                               f"{(gate.reason if effect.reason is None else effect.reason) or 'none'}",
-                              time.monotonic())
+                              suspend_clock.now())
 
     def notification(self, attribute, value, stamp, *, replay=False):
         kind = self.device.voice_attributes.get(attribute)
@@ -249,7 +248,7 @@ class VoiceReceiver:
                 if kind == "control":
                     self.observation.control(value, stamp, "unavailable", "not_available")
             return
-        now = time.monotonic()
+        now = suspend_clock.now()
         # Bounded metadata only; never audio bytes, addresses or arbitrary text.
         if attribute not in self.seen_attributes and len(self.seen_attributes) < 8:
             self.seen_attributes.add(attribute)
@@ -316,12 +315,12 @@ class VoiceReceiver:
         self._startup.clear()
         self._startup_bytes = 0
         if not self.detect_only:
-            self.effects(self.gate.finish(time.monotonic(), "host_stop"))
+            self.effects(self.gate.finish(suspend_clock.now(), "host_stop"))
 
     def host(self, message):
         if not self.available or self.detect_only:
             return
-        attempt, result, now = message["attempt"], message["result"], time.monotonic()
+        attempt, result, now = message["attempt"], message["result"], suspend_clock.now()
         if result in ("ready", "failed"):
             self.effects(self.gate.host_result(attempt, result == "ready", now))
         elif result in ("released", "release_failed"):
@@ -332,13 +331,13 @@ class VoiceReceiver:
     def stop(self):
         self.stopping = True
         if not self.detect_only:
-            self.effects(self.gate.finish(time.monotonic(), "receiver_stop", shutdown=True))
+            self.effects(self.gate.finish(suspend_clock.now(), "receiver_stop", shutdown=True))
 
     @property
     def hardware_stopped(self):
         gate = self.gate
         return (self.detect_only or not self.available or (self.pending is None and not self.queue and gate.stream is None
-                and not gate.possible_open and (gate.stop_seen is None or time.monotonic()
+                and not gate.possible_open and (gate.stop_seen is None or suspend_clock.now()
                 - max(gate.stop_seen, gate.last_audio) >= .3)))
 
     async def tick(self):
@@ -354,17 +353,17 @@ class VoiceReceiver:
             except Exception as error:
                 success = False
                 self._observe_command(effect.value, effect.attempt, 'failed', self._pending_started, error)
-            self.effects(self.gate.command_result(effect, success, time.monotonic()))
-        elif self.pending is not None and not self._pending_reported and time.monotonic() - self._pending_started >= 3:
+            self.effects(self.gate.command_result(effect, success, suspend_clock.now()))
+        elif self.pending is not None and not self._pending_reported and suspend_clock.now() - self._pending_started >= 3:
             effect, _ = self.pending
             self._observe_command(effect.value, effect.attempt, 'native_pending', self._pending_started)
             self._pending_reported = True
-        self.effects(self.gate.tick(time.monotonic()))
+        self.effects(self.gate.tick(suspend_clock.now()))
         if self.pending is None:
             while self.queue:
                 effect = self.queue.popleft()
                 if self.gate.command_submitted(effect):
-                    self._pending_started = time.monotonic()
+                    self._pending_started = suspend_clock.now()
                     self._pending_reported = False
                     self._observe_command(effect.value, effect.attempt, 'begin', self._pending_started)
                     self.pending = effect, asyncio.create_task(self.device.write_voice(effect.value))
