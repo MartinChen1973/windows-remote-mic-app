@@ -89,6 +89,8 @@ _REFERENCE_ACTION_LABELS: Dict[key_mapping.ActionKind, str] = {
     key_mapping.ActionKind.COMMAND_SINK_PASTE: "指挥目标粘贴",
     key_mapping.ActionKind.COMMAND_SINK_SUBMIT: "指挥目标发送",
 }
+
+# Legacy preset labels stay parseable; only toggle is offered in the mapping UI.
 _REFERENCE_ACTION_KINDS_BY_LABEL: Dict[str, key_mapping.ActionKind] = {
     label: action_kind for action_kind, label in _REFERENCE_ACTION_LABELS.items()
 }
@@ -149,14 +151,7 @@ ACTION_OPTION_GROUPS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
             "打开 Chrome", "打开 Edge", "打开 Zed",
         ),
     ),
-    (
-        "指挥目标",
-        (
-            "指挥目标锁定",
-            "指挥目标粘贴",
-            "指挥目标发送",
-        ),
-    ),
+    ("指挥目标", ("指挥目标锁定",)),
     ("其他", ("禁用",)),
 )
 

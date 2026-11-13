@@ -4741,6 +4741,20 @@ class RC003App:
                 trigger.value,
             )
             return
+        if (
+            str(button_id) == "ok"
+            and command_sink_windows.should_hijack_ok_button()
+        ):
+            try:
+                if trigger is button_gesture.ButtonTrigger.SINGLE_CLICK:
+                    command_sink_windows.on_ok_single_tap()
+                elif trigger is button_gesture.ButtonTrigger.DOUBLE_CLICK:
+                    command_sink_windows.on_ok_double_tap()
+            except command_sink_windows.CommandSinkError as exc:
+                self._logger.info(
+                    "command sink ok gesture rejected: %s", exc.code
+                )
+            return
         if action.kind in key_mapping.MOUSE_HOLD_BUTTONS:
             if hold_owner is not None:
                 self._begin_button_mouse_hold(hold_owner, action)
@@ -4853,14 +4867,14 @@ class RC003App:
                     command_sink_windows.toggle_lock()
                 except command_sink_windows.CommandSinkError as exc:
                     action_error = exc.code
-            elif action.kind == key_mapping.ActionKind.COMMAND_SINK_PASTE:
-                try:
-                    command_sink_windows.paste_clipboard_to_sink()
-                except command_sink_windows.CommandSinkError as exc:
-                    action_error = exc.code
             elif action.kind == key_mapping.ActionKind.COMMAND_SINK_SUBMIT:
                 try:
                     command_sink_windows.submit_sink()
+                except command_sink_windows.CommandSinkError as exc:
+                    action_error = exc.code
+            elif action.kind == key_mapping.ActionKind.COMMAND_SINK_PASTE:
+                try:
+                    command_sink_windows.paste_clipboard_to_sink()
                 except command_sink_windows.CommandSinkError as exc:
                     action_error = exc.code
             elif action_executor.is_application_action(action):
