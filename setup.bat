@@ -191,6 +191,11 @@ echo [setup]   kind=chromecast_worker  - Google remote service start
 echo [setup]   kind=hid_helper_setup  - Xiaomi custom key helper
 echo [setup]   kind=vb_cable_setup    - Voice page VB-CABLE install
 echo [setup]   kind=voice_program     - optional elevated IME launch
+set "QUICK_START=%PROJECT%\build\install-dev-quick-start.ps1"
+if exist "%QUICK_START%" (
+    echo [setup] quick start: refreshing Start menu shortcut and Ctrl+Alt+M hotkey
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%QUICK_START%" >nul 2>&1
+)
 exit /b 0
 
 rem ===========================================================================

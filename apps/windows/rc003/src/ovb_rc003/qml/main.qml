@@ -55,6 +55,7 @@ ApplicationWindow {
     property bool pendingExitAutoSave: false
     property bool applicationExitInProgress: false
     property bool portableHidSetupPromptAttempted: false
+    property bool trayHideNoticeShownThisSession: false
 
     function restoreWindow() {
         window.showNormal()
@@ -303,7 +304,18 @@ ApplicationWindow {
         }
         function onWindowHideReady() {
             window.settleInputUiAfterStop()
-            window.hide()
+            if (systemTrayIcon.available) {
+                window.hide()
+                if (!window.trayHideNoticeShownThisSession) {
+                    window.trayHideNoticeShownThisSession = true
+                    systemTrayIcon.showMessage(
+                        SettingsController.applicationDisplayName,
+                        qsTr("窗口已隐藏，应用在后台继续运行。请点按通知区域的无线麦图标可再次打开；若未见图标，请在 Windows 任务栏设置中开启本程序的托盘图标。"),
+                        Platform.SystemTrayIcon.Information)
+                }
+            } else {
+                window.showMinimized()
+            }
         }
         function onWindowHideFailed(message) {
             window.restoreWindow()
