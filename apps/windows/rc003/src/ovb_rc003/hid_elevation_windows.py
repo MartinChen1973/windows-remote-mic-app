@@ -2878,12 +2878,30 @@ def _run_elevated_and_wait(
     info.lpParameters = str(arguments)
     info.lpDirectory = str(_lexical_absolute(Path(executable)).parent)
     info.nShow = 0
+    from . import elevation_trace
+
+    elevation_trace.log_uac_requested(
+        "hid_helper_setup",
+        executable=executable,
+        detail="Install or repair Xiaomi HID helper",
+    )
     ctypes.set_last_error(0)
     if not shell32.ShellExecuteExW(ctypes.byref(info)):
         error = int(ctypes.get_last_error())
         if error == 1223:
+            elevation_trace.log_uac_outcome(
+                "hid_helper_setup",
+                "cancelled",
+                winerror=error,
+            )
             raise HidElevationError("uac_cancelled")
+        elevation_trace.log_uac_outcome(
+            "hid_helper_setup",
+            "launch_failed",
+            winerror=error,
+        )
         raise HidElevationError("hid_helper_setup_launch_failed")
+    elevation_trace.log_uac_outcome("hid_helper_setup", "accepted")
     if not info.hProcess:
         raise HidElevationError("hid_helper_setup_process_missing")
     try:

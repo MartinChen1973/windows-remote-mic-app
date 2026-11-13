@@ -306,7 +306,23 @@ def _default_start_elevated(path: str, cwd: str) -> None:
         raise VendorLaunchError(
             "launching the vendor setup UI requires Windows (os.startfile 'runas')"
         )
-    os.startfile(path, "runas", cwd=cwd)  # type: ignore[attr-defined,call-arg]
+    from . import elevation_trace
+
+    elevation_trace.log_uac_requested(
+        "vb_cable_setup",
+        executable=path,
+        detail="Launch VB-CABLE vendor installer",
+    )
+    try:
+        os.startfile(path, "runas", cwd=cwd)  # type: ignore[attr-defined,call-arg]
+    except OSError as exc:
+        elevation_trace.log_uac_outcome(
+            "vb_cable_setup",
+            "cancelled" if getattr(exc, "winerror", None) == 1223 else "launch_failed",
+            winerror=getattr(exc, "winerror", None),
+        )
+        raise
+    elevation_trace.log_uac_outcome("vb_cable_setup", "accepted")
 
 
 def launch_vendor_setup(

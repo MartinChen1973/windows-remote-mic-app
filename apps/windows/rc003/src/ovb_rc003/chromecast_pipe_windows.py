@@ -13,7 +13,7 @@ from pathlib import Path
 import subprocess
 import sys
 
-from . import dev_session, hid_elevation_windows, suspend_clock
+from . import dev_session, elevation_trace, hid_elevation_windows, suspend_clock
 from .chromecast_channel import SessionIdentity, MAX_MESSAGE_BYTES
 
 WORKER_FLAG = "--chromecast-worker"
@@ -287,6 +287,28 @@ def launch_worker(identity: SessionIdentity, parent: Peer):
     info.size, info.mask, info.show = C.sizeof(info), 0x40 | 0x100, 0
     info.verb, info.file = "runas", sys.executable
     info.parameters = subprocess.list2cmdline(command)
-    if not shell.ShellExecuteExW(C.byref(info)) or not info.process:
+    elevation_trace.log_uac_requested(
+        "chromecast_worker",
+        executable=sys.executable,
+        detail="Launch elevated Google receiver child process",
+        worker_flag=WORKER_FLAG,
+    )
+    C.set_last_error(0)
+    if not shell.ShellExecuteExW(C.byref(info)):
+        error = int(C.get_last_error())
+        elevation_trace.log_uac_outcome(
+            "chromecast_worker",
+            "launch_failed",
+            winerror=error,
+        )
         raise PipeError("permission_cancelled")
+    if not info.process:
+        elevation_trace.log_uac_outcome("chromecast_worker", "missing_process")
+        raise PipeError("permission_cancelled")
+    kernel, _ = api()
+    elevation_trace.log_uac_outcome(
+        "chromecast_worker",
+        "accepted",
+        child_pid=int(kernel.GetProcessId(info.process)),
+    )
     return info.process

@@ -730,9 +730,29 @@ def launch_voice_program(
 
     operation = "runas" if request_elevation else "open"
     launcher = start_file or _default_start_file
+    if operation == "runas":
+        from . import elevation_trace
+
+        elevation_trace.log_uac_requested(
+            "voice_program",
+            executable=resolved.executable,
+            detail="Launch voice IME with elevation",
+            provider=resolved.provider_id,
+        )
     try:
         launcher(str(resolved.executable), operation, str(resolved.executable.parent))
     except OSError as exc:
+        if operation == "runas":
+            from . import elevation_trace
+
+            elevation_trace.log_uac_outcome(
+                "voice_program",
+                "cancelled"
+                if getattr(exc, "winerror", None) == _ERROR_CANCELLED
+                else "launch_failed",
+                winerror=getattr(exc, "winerror", None),
+                provider=resolved.provider_id,
+            )
         if getattr(exc, "winerror", None) == _ERROR_CANCELLED:
             return VoiceProgramLaunchResult(
                 resolved.provider_id, False, False, "cancelled"
@@ -740,6 +760,14 @@ def launch_voice_program(
         return VoiceProgramLaunchResult(resolved.provider_id, False, False, "launch_failed")
     except Exception:
         return VoiceProgramLaunchResult(resolved.provider_id, False, False, "launch_failed")
+    if operation == "runas":
+        from . import elevation_trace
+
+        elevation_trace.log_uac_outcome(
+            "voice_program",
+            "accepted",
+            provider=resolved.provider_id,
+        )
     confirmed_matches = _wait_for_matching_voice_program_process(
         resolved,
         process_iter=process_iter,

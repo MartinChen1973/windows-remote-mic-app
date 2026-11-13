@@ -1536,8 +1536,9 @@ def _load_qt_classes() -> dict:
             self._bridge_reconnect_busy = False
             try:
                 import json as _json
-                from . import source_build_info
-                logging_setup.get_logger(self._config_root).info(
+                from . import elevation_trace, source_build_info
+                logger = logging_setup.get_logger(self._config_root)
+                logger.info(
                     "settings startup: build=%s bridge_running=%s",
                     _json.dumps(
                         source_build_info.describe(
@@ -1547,6 +1548,14 @@ def _load_qt_classes() -> dict:
                         sort_keys=True,
                     ),
                     self._bridge_running,
+                )
+                elevation_trace.log_process_token(
+                    context="settings_window",
+                    elevated=hid_elevation_windows.is_process_elevated(),
+                )
+                elevation_trace.log_uac_note(
+                    "grep app.log for elevation_prompt to see when UAC was requested; "
+                    f"log_file={elevation_trace.default_log_file_hint()}"
                 )
             except Exception:
                 pass
