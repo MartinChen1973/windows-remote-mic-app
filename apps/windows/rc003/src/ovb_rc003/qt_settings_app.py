@@ -247,8 +247,7 @@ def _apply_application_icon(
     icon_type,
     icon_path: Path,
     *,
-    sink_lamp: bool = False,
-    sink_locked: bool = False,
+    sink_lamp: str = "",
 ) -> None:
     """Applies one state icon to Qt's default and the loaded native window."""
 
@@ -267,11 +266,7 @@ def _apply_application_icon(
             hwnd = int(win_id())
             if hwnd:
                 if sink_lamp:
-                    taskbar_overlay_windows.apply_sink_lamp_overlay(
-                        hwnd,
-                        show_lamp=True,
-                        locked=sink_locked,
-                    )
+                    taskbar_overlay_windows.apply_sink_lamp_overlay(hwnd, lamp=sink_lamp)
                 else:
                     taskbar_overlay_windows.clear_overlay(hwnd)
 
@@ -1631,6 +1626,7 @@ def _load_qt_classes() -> dict:
                 is bridge_runtime_status.BridgeConnectionState.CONNECTED
             )
             self._command_sink_locked = False
+            self._command_sink_lamp = command_sink_windows.LAMP_OPEN
             self._bridge_connection_state = (
                 runtime_status.state.value
                 if runtime_status is not None
@@ -2951,9 +2947,9 @@ def _load_qt_classes() -> dict:
 
         def _tray_icon_state(self) -> str:
             if self._bridge_connected and self._button_receiver_usable():
-                if self._command_sink_locked:
-                    return "connected_sink_locked"
-                return "connected_sink_open"
+                return command_sink_windows.connected_sink_icon_state(
+                    root=self._config_root
+                )
             if self._bridge_running:
                 return "waiting"
             return "off"
@@ -2961,8 +2957,14 @@ def _load_qt_classes() -> dict:
         def _refresh_command_sink_state(self) -> None:
             state = command_sink_windows.read_public_state(self._config_root)
             locked = bool(state.locked)
-            if locked != self._command_sink_locked:
+            lamp = str(state.lock_lamp)
+            lamp_changed = (
+                locked != self._command_sink_locked
+                or lamp != self._command_sink_lamp
+            )
+            if lamp_changed:
                 self._command_sink_locked = locked
+                self._command_sink_lamp = lamp
                 self.commandSinkLockedChanged.emit()
                 self.trayStateChanged.emit()
             notice_kind, notice_message = command_sink_windows.consume_tray_notice(
@@ -2993,6 +2995,8 @@ def _load_qt_classes() -> dict:
             if self._bridge_connected and self._button_receiver_usable():
                 if self._command_sink_locked:
                     tooltip += " · 绿点：指挥目标已锁定（可说话）"
+                elif self._command_sink_lamp == command_sink_windows.LAMP_REJECTED:
+                    tooltip += " · 红点：锁定失败（请聚焦聊天输入后重试）"
                 else:
                     tooltip += " · 橙点：指挥目标未锁定（请勿对 Cursor 说话）"
             return tooltip
@@ -10384,14 +10388,15 @@ def run_settings_window(
 
     def update_application_icon() -> None:
         state = controller._tray_icon_state()
-        show_lamp = state in (
-            "connected_sink_locked",
-            "connected_sink_open",
-        )
-        # Taskbar: base mic icon plus Windows overlay dot (avoids double badges).
+        sink_lamps = {
+            "connected_sink_locked": command_sink_windows.LAMP_LOCKED,
+            "connected_sink_open": command_sink_windows.LAMP_OPEN,
+            "connected_sink_rejected": command_sink_windows.LAMP_REJECTED,
+        }
+        sink_lamp = sink_lamps.get(state, "")
         path = (
             resources.find_app_icon("connected")
-            if show_lamp
+            if sink_lamp
             else resources.find_app_icon(state)
         )
         if path is not None:
@@ -10400,8 +10405,7 @@ def run_settings_window(
                 root_window,
                 QIcon,
                 path,
-                sink_lamp=show_lamp,
-                sink_locked=state == "connected_sink_locked",
+                sink_lamp=sink_lamp,
             )
 
     update_application_icon()

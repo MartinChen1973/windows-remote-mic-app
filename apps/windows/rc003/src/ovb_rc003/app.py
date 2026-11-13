@@ -4115,17 +4115,18 @@ class RC003App:
         tray = self._bridge_notification_tray
         if tray is None:
             return
-        public = command_sink_windows.read_public_state(self._config_root)
-        if public.locked:
-            tray.refresh_command_sink_lamp(
-                icon_state="connected_sink_locked",
-                tooltip_suffix=" · 绿点：已锁定",
-            )
-        else:
-            tray.refresh_command_sink_lamp(
-                icon_state="connected_sink_open",
-                tooltip_suffix=" · 橙点：未锁定",
-            )
+        icon_state = command_sink_windows.connected_sink_icon_state(
+            root=self._config_root
+        )
+        suffix = {
+            "connected_sink_locked": " · 绿点：已锁定",
+            "connected_sink_rejected": " · 红点：锁定失败",
+            "connected_sink_open": " · 橙点：未锁定",
+        }.get(icon_state, "")
+        tray.refresh_command_sink_lamp(
+            icon_state=icon_state,
+            tooltip_suffix=suffix,
+        )
 
     def request_settings_reload_now(self) -> None:
         """Apply saved settings promptly from the bridge event-loop thread."""
@@ -4882,10 +4883,15 @@ class RC003App:
                 action_executor.open_quicker_uri(action)
             elif action.kind == key_mapping.ActionKind.COMMAND_SINK_TOGGLE:
                 try:
-                    command_sink_windows.toggle_lock()
+                    command_sink_windows.toggle_lock(root=self._config_root)
                     self._refresh_sink_tray_lamp()
                 except command_sink_windows.CommandSinkError as exc:
                     action_error = exc.code
+                    if exc.code == command_sink_windows.FOCUS_NOT_EDITABLE:
+                        command_sink_windows.record_lock_rejection(
+                            root=self._config_root
+                        )
+                        self._refresh_sink_tray_lamp()
             elif action.kind == key_mapping.ActionKind.COMMAND_SINK_SUBMIT:
                 try:
                     command_sink_windows.submit_sink()

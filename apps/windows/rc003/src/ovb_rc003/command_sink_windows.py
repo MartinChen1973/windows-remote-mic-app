@@ -34,6 +34,11 @@ CLIPBOARD_WAIT_TIMEOUT = "clipboard_wait_timeout"
 NOTICE_STALE_LOCK = "stale_lock"
 NOTICE_LOCKED = "locked"
 NOTICE_UNLOCKED = "unlocked"
+NOTICE_LOCK_REJECTED = "lock_rejected"
+
+LAMP_OPEN = "open"
+LAMP_LOCKED = "locked"
+LAMP_REJECTED = "rejected"
 
 _STALE_NOTICE_COOLDOWN_SECONDS = 60.0
 _CLIPBOARD_POLL_INTERVAL_SECONDS = 0.15
@@ -68,6 +73,7 @@ class CommandSinkError(Exception):
 @dataclass(frozen=True)
 class CommandSinkPublicState:
     locked: bool
+    lock_lamp: str = LAMP_OPEN
     target_executable: str = ""
     tray_notice_kind: str = ""
     tray_notice_message: str = ""
@@ -97,12 +103,60 @@ def state_path(root: Optional[Path] = None) -> Path:
 def read_public_state(root: Optional[Path] = None) -> CommandSinkPublicState:
     payload = _load_payload(root)
     notice = payload.get("tray_notice") if isinstance(payload.get("tray_notice"), dict) else {}
+    locked = bool(payload.get("locked"))
     return CommandSinkPublicState(
-        locked=bool(payload.get("locked")),
+        locked=locked,
+        lock_lamp=_resolve_lock_lamp(payload),
         target_executable=str(payload.get("foreground_executable") or ""),
         tray_notice_kind=str(notice.get("kind") or ""),
         tray_notice_message=str(notice.get("message") or ""),
     )
+
+
+def connected_sink_icon_state(*, root: Optional[Path] = None) -> str:
+    """Tray / taskbar icon id: orange open, green locked, red rejected."""
+
+    public = read_public_state(root)
+    if public.locked:
+        return "connected_sink_locked"
+    if public.lock_lamp == LAMP_REJECTED:
+        return "connected_sink_rejected"
+    return "connected_sink_open"
+
+
+def taskbar_lamp_mode(*, root: Optional[Path] = None) -> str:
+    public = read_public_state(root)
+    if public.locked:
+        return LAMP_LOCKED
+    if public.lock_lamp == LAMP_REJECTED:
+        return LAMP_REJECTED
+    return LAMP_OPEN
+
+
+def record_lock_rejection(*, root: Optional[Path] = None) -> None:
+    with _state_lock:
+        payload = _load_payload(root)
+        if bool(payload.get("locked")):
+            return
+        _write_unlocked(payload)
+        payload["lock_lamp"] = LAMP_REJECTED
+        payload["tray_notice"] = {
+            "kind": NOTICE_LOCK_REJECTED,
+            "message": (
+                "锁定失败（红点）：请把焦点放在可编辑的聊天输入框上，"
+                "再按指挥目标锁定键。"
+            ),
+        }
+        _save_payload(payload, root)
+
+
+def _resolve_lock_lamp(payload: dict[str, Any]) -> str:
+    if bool(payload.get("locked")):
+        return LAMP_LOCKED
+    lamp = str(payload.get("lock_lamp") or LAMP_OPEN)
+    if lamp == LAMP_REJECTED:
+        return LAMP_REJECTED
+    return LAMP_OPEN
 
 
 def consume_tray_notice(root: Optional[Path] = None) -> tuple[str, str]:
@@ -153,6 +207,7 @@ def toggle_lock(*, root: Optional[Path] = None) -> CommandSinkActionResult:
         payload = {
             "version": COMMAND_SINK_STATE_VERSION,
             "locked": True,
+            "lock_lamp": LAMP_LOCKED,
             "top_level_hwnd": int(snapshot.foreground_handle),
             "focus_hwnd": int(snapshot.focus_handle),
             "foreground_executable": str(snapshot.foreground_executable or ""),
@@ -373,6 +428,7 @@ def _clipboard_snapshot() -> tuple[int, str]:
 def _write_unlocked(payload: dict[str, Any]) -> None:
     payload["version"] = COMMAND_SINK_STATE_VERSION
     payload["locked"] = False
+    payload["lock_lamp"] = LAMP_OPEN
     payload.pop("top_level_hwnd", None)
     payload.pop("focus_hwnd", None)
     payload.pop("foreground_executable", None)
@@ -381,13 +437,25 @@ def _write_unlocked(payload: dict[str, Any]) -> None:
 def _load_payload(root: Optional[Path]) -> dict[str, Any]:
     path = state_path(root)
     if not path.is_file():
-        return {"version": COMMAND_SINK_STATE_VERSION, "locked": False}
+        return {
+            "version": COMMAND_SINK_STATE_VERSION,
+            "locked": False,
+            "lock_lamp": LAMP_OPEN,
+        }
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError, TypeError, ValueError):
-        return {"version": COMMAND_SINK_STATE_VERSION, "locked": False}
+        return {
+            "version": COMMAND_SINK_STATE_VERSION,
+            "locked": False,
+            "lock_lamp": LAMP_OPEN,
+        }
     if not isinstance(data, dict):
-        return {"version": COMMAND_SINK_STATE_VERSION, "locked": False}
+        return {
+            "version": COMMAND_SINK_STATE_VERSION,
+            "locked": False,
+            "lock_lamp": LAMP_OPEN,
+        }
     return data
 
 

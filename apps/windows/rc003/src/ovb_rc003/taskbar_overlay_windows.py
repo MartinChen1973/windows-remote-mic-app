@@ -48,24 +48,31 @@ def _make_guid(parts: tuple) -> _GUID:
 def apply_sink_lamp_overlay(
     hwnd: int,
     *,
-    show_lamp: bool,
-    locked: bool,
+    lamp: str,
 ) -> None:
-    """Attach a small orange or green dot to the taskbar button for ``hwnd``."""
+    """Attach orange, green, or red status dot to the taskbar button."""
     if not hwnd:
         return
-    if not show_lamp:
+    if lamp not in ("open", "locked", "rejected"):
         clear_overlay(hwnd)
         return
-    name = "taskbar-dot-green" if locked else "taskbar-dot-orange"
-    path = resources.find_taskbar_dot_icon(name)
+    dot_names = {
+        "open": "taskbar-dot-orange",
+        "locked": "taskbar-dot-green",
+        "rejected": "taskbar-dot-red",
+    }
+    descriptions = {
+        "open": "指挥目标未锁定",
+        "locked": "指挥目标已锁定",
+        "rejected": "指挥目标锁定失败",
+    }
+    path = resources.find_taskbar_dot_icon(dot_names[lamp])
     if path is None:
         clear_overlay(hwnd)
         return
     icon = _load_icon(path)
-    description = "指挥目标已锁定" if locked else "指挥目标未锁定"
     if icon:
-        _set_overlay(hwnd, icon, description)
+        _set_overlay(hwnd, icon, descriptions[lamp])
     else:
         clear_overlay(hwnd)
 

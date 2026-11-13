@@ -18,8 +18,7 @@ class TaskbarOverlayTests(unittest.TestCase):
         with mock.patch.object(taskbar_overlay_windows, "_set_overlay") as overlay:
             taskbar_overlay_windows.apply_sink_lamp_overlay(
                 123,
-                show_lamp=True,
-                locked=True,
+                lamp="locked",
             )
         overlay.assert_called_once()
 

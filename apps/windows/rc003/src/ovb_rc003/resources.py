@@ -56,11 +56,13 @@ _APP_ICON_FILENAMES = {
     "connected": "remote-mic-connected.svg",
     "connected_sink_locked": "remote-mic-connected-sink-locked.svg",
     "connected_sink_open": "remote-mic-connected-sink-open.svg",
+    "connected_sink_rejected": "remote-mic-connected-sink-rejected.svg",
 }
 
 _TASKBAR_DOT_FILENAMES = {
     "taskbar-dot-green": "taskbar-dot-green.ico",
     "taskbar-dot-orange": "taskbar-dot-orange.ico",
+    "taskbar-dot-red": "taskbar-dot-red.ico",
 }
 
 

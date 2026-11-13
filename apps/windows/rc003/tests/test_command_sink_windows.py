@@ -31,6 +31,18 @@ class CommandSinkStateFileTests(unittest.TestCase):
         self.assertTrue(result.changed)
         self.assertFalse(command_sink_windows.read_public_state(self.root).locked)
 
+    def test_record_lock_rejection_sets_red_lamp(self) -> None:
+        command_sink_windows.record_lock_rejection(root=self.root)
+        public = command_sink_windows.read_public_state(self.root)
+        self.assertFalse(public.locked)
+        self.assertEqual(
+            public.lock_lamp, command_sink_windows.LAMP_REJECTED
+        )
+        self.assertEqual(
+            command_sink_windows.connected_sink_icon_state(root=self.root),
+            "connected_sink_rejected",
+        )
+
     def test_on_ok_single_raises_when_unlocked(self) -> None:
         with self.assertRaises(command_sink_windows.CommandSinkError) as ctx:
             command_sink_windows.on_ok_single_tap(root=self.root)
