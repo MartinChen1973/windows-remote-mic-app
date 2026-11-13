@@ -7656,6 +7656,12 @@ def _load_qt_classes() -> dict:
                 self.windowRestoreRequested.emit()
 
         @Slot()
+        def refreshTaskbarLamp(self) -> None:
+            """Re-apply taskbar icon and overlay after window state changes."""
+
+            self.trayStateChanged.emit()
+
+        @Slot()
         def refreshBridgeState(self) -> None:
             if (
                 self._maintenance_exit_pending
@@ -10378,12 +10384,17 @@ def run_settings_window(
 
     def update_application_icon() -> None:
         state = controller._tray_icon_state()
-        path = resources.find_app_icon(state)
+        show_lamp = state in (
+            "connected_sink_locked",
+            "connected_sink_open",
+        )
+        # Taskbar: base mic icon plus Windows overlay dot (avoids double badges).
+        path = (
+            resources.find_app_icon("connected")
+            if show_lamp
+            else resources.find_app_icon(state)
+        )
         if path is not None:
-            show_lamp = state in (
-                "connected_sink_locked",
-                "connected_sink_open",
-            )
             _apply_application_icon(
                 app,
                 root_window,
