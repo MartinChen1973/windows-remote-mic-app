@@ -287,11 +287,11 @@ class RC003App:
         self._runtime_voice_updated_at: Optional[float] = None
         self._runtime_battery_level: Optional[int] = None
         self._runtime_last_button_publish_monotonic = 0.0
+        from . import source_build_info
+        build = source_build_info.describe(__version__, self._runtime_identity)
         self._logger.info(
-            "startup: app identity: version=%s runtime=%s package=%s",
-            self._runtime_identity.app_version,
-            self._runtime_identity.runtime_kind,
-            self._runtime_identity.package_name,
+            "startup: build=%s",
+            json.dumps(build, ensure_ascii=True, sort_keys=True),
         )
         if launch_voice_program_on_start and (
             selected_profile != remote_selection.CHROMECAST_PROFILE

@@ -1530,9 +1530,26 @@ def _load_qt_classes() -> dict:
             self._bridge_resume_recovery_attempted = False
             self._resume_watch = suspend_clock.ResumeDetector()
             self._bridge_recovery_running = False
+            self._bridge_status_log_signature = ""
             self._legacy_bridge_launch_handoff_attempted = False
             self._bridge_reconnect_available = False
             self._bridge_reconnect_busy = False
+            try:
+                import json as _json
+                from . import source_build_info
+                logging_setup.get_logger(self._config_root).info(
+                    "settings startup: build=%s bridge_running=%s",
+                    _json.dumps(
+                        source_build_info.describe(
+                            __version__, self._current_runtime_identity
+                        ),
+                        ensure_ascii=True,
+                        sort_keys=True,
+                    ),
+                    self._bridge_running,
+                )
+            except Exception:
+                pass
             runtime_status = (
                 bridge_runtime_status.read_status(self._config_root)
                 if self._bridge_running
@@ -2940,6 +2957,43 @@ def _load_qt_classes() -> dict:
             self._bridge_launch_elapsed_seconds = elapsed
             self.bridgeLaunchElapsedSecondsChanged.emit()
 
+        def _log_bridge_status_snapshot(
+            self,
+            runtime_status: Optional[bridge_runtime_status.BridgeRuntimeStatus],
+            *,
+            connected: bool,
+        ) -> None:
+            import json as _json
+
+            fields = {
+                "connected": connected,
+                "connection_state": self._bridge_connection_state,
+                "raw_input_state": self._raw_input_state,
+                "hid_tap_state": self._hid_tap_state,
+                "restart_recommended": self._bridge_restart_recommended,
+                "reconnect_available": self._bridge_reconnect_available,
+                "reconnect_busy": self._bridge_reconnect_busy,
+                "launch_phase": self._bridge_launch_phase,
+            }
+            if runtime_status is not None:
+                fields["bridge_state"] = runtime_status.state.value
+                fields["bridge_runtime_id"] = runtime_status.runtime_id
+                fields["bridge_app_version"] = runtime_status.app_version
+                fields["runtime_identity_match"] = (
+                    bridge_runtime_status.runtime_identity_matches(
+                        runtime_status,
+                        self._current_runtime_identity,
+                    )
+                )
+            signature = _json.dumps(fields, ensure_ascii=True, sort_keys=True)
+            if signature == self._bridge_status_log_signature:
+                return
+            self._bridge_status_log_signature = signature
+            logging_setup.get_logger(self._config_root).info(
+                "settings bridge status: %s",
+                signature,
+            )
+
         def _sync_bridge_connection_status(self, running: bool) -> None:
             if self._get_bridge_launch_busy():
                 return
@@ -2974,6 +3028,7 @@ def _load_qt_classes() -> dict:
             )
             self._set_bridge_connected(connected)
             if running:
+                prev_restart = self._bridge_restart_recommended
                 self._update_bridge_restart_recommendation(
                     runtime_status,
                     schedule_recovery=True,
@@ -2984,6 +3039,22 @@ def _load_qt_classes() -> dict:
                 self._set_bridge_reconnect_available(reconnect_available)
                 if connected or not reconnect_available:
                     self._set_bridge_reconnect_busy(False)
+                self._log_bridge_status_snapshot(runtime_status, connected=connected)
+                if (
+                    runtime_status is not None
+                    and self._bridge_restart_recommended
+                    and not prev_restart
+                ):
+                    logging_setup.get_logger(self._config_root).info(
+                        "settings bridge restart recommended: identity_match=%s "
+                        "requires_restart=%s status_age_seconds=%.1f",
+                        bridge_runtime_status.runtime_identity_matches(
+                            runtime_status,
+                            self._current_runtime_identity,
+                        ),
+                        self._runtime_status_requires_restart(runtime_status),
+                        time.time() - runtime_status.updated_at,
+                    )
                 if runtime_status is not None:
                     if self._bridge_reconnect_busy and not connected:
                         self._set_bridge_launch_phase("reconnecting")

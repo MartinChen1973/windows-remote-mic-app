@@ -229,9 +229,12 @@ class SelectedDevice:
         self.watcher = DeviceInformation.create_watcher_aqs_filter(BluetoothAdapter.get_device_selector())
         self._watcher_stop_requested = False
         def added(sender, info):
-            if self.enumerated.is_set():
-                self.changed.set()
+            # Windows may re-emit Added for the same adapter after resume. Only
+            # treat a genuinely new adapter id as a hotplug after enumeration.
+            was_new = info.id not in self.ids
             self.ids.add(info.id)
+            if self.enumerated.is_set() and was_new:
+                self.changed.set()
         self.tokens = [
             ("added", self.watcher.add_added(added)),
             ("removed", self.watcher.add_removed(lambda *_: self.changed.set())),

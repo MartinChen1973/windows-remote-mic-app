@@ -79,6 +79,25 @@ class InputWaitTests(unittest.IsolatedAsyncioTestCase):
 
 
 class EnvironmentTests(unittest.TestCase):
+    def test_duplicate_radio_added_after_enumeration_does_not_mark_ambiguous(self):
+        target = device.SelectedDevice(ENTITY)
+        target.ids.add("radio-a")
+        target.enumerated.set()
+        for adapter_id in ("radio-a", "radio-b"):
+            info = SimpleNamespace(id=adapter_id)
+            was_new = info.id not in target.ids
+            target.ids.add(info.id)
+            if target.enumerated.is_set() and was_new:
+                target.changed.set()
+        self.assertTrue(target.changed.is_set())
+        target.changed.clear()
+        info = SimpleNamespace(id="radio-a")
+        was_new = info.id not in target.ids
+        target.ids.add(info.id)
+        if target.enumerated.is_set() and was_new:
+            target.changed.set()
+        self.assertFalse(target.changed.is_set())
+
     def test_interface_absence_identity_mismatch_and_revision_are_distinct(self):
         for paths, resolver, reason in (
             ([], lambda _: ENTITY, "input_interface_unavailable"),

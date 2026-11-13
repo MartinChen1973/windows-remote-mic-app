@@ -40,6 +40,7 @@ try {
     }
 
     $env:PYTHONPATH = Join-Path $RC003Root "src"
+    $env:PYTHONDONTWRITEBYTECODE = "1"
     $env:REMOTE_MIC_DEV_SESSION = "1"
     $StartArguments = @{
         FilePath = $VenvPythonw

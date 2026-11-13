@@ -45,6 +45,13 @@ class ChromecastRuntime:
             await asyncio.to_thread(self.client.stop)
 
     def cancel_input(self):
+        reason = self.client.reason if self.client is not None else "capture_failed"
+        loss_state = self.loss_state() if self.client is not None else "unknown"
+        self.services.logger.info(
+            "Chromecast input lost: reason=%s loss_state=%s",
+            reason,
+            loss_state,
+        )
         self.services.disable_input()
         if self.client is not None and not self.stopping.is_set():
             self.services.set_input_state(raw_input_state=self.loss_state(),
@@ -69,6 +76,7 @@ class ChromecastRuntime:
 
     def receiver_ready(self):
         if not self.stopping.is_set():
+            self.services.logger.info("Chromecast receiver ready")
             self.services.resume_input()
             self.services.set_input_state(raw_input_state="chromecast_ready", hid_tap_state="ready")
             self.services.publish_status(bridge_runtime_status.BridgeConnectionState.CONNECTED)
@@ -123,7 +131,14 @@ class ChromecastRuntime:
                     self.services.set_input_state(raw_input_state="chromecast_recovering", hid_tap_state="starting")
                     self.services.publish_status(bridge_runtime_status.BridgeConnectionState.CONNECTING)
                     delays = RESUME_RECOVERY_DELAYS if resume_delays else RECOVERY_DELAYS
-                    await asyncio.sleep(delays[min(recoveries, len(delays) - 1)])
+                    delay = delays[min(recoveries, len(delays) - 1)]
+                    self.services.logger.info(
+                        "Chromecast recovery scheduled: attempt=%s delay_seconds=%.1f resume_spacing=%s",
+                        recoveries + 1,
+                        delay,
+                        resume_delays,
+                    )
+                    await asyncio.sleep(delay)
                     if self.stopping.is_set() or self.client.finished.is_set():
                         break
                     self.voice_host = self.services.create_voice_host()
