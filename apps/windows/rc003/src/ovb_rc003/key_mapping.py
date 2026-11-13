@@ -87,6 +87,9 @@ class ActionKind(str, Enum):
     OPEN_CHROME = "open_chrome"
     OPEN_EDGE = "open_edge"
     OPEN_ZED = "open_zed"
+    COMMAND_SINK_TOGGLE = "command_sink_toggle"
+    COMMAND_SINK_PASTE = "command_sink_paste"
+    COMMAND_SINK_SUBMIT = "command_sink_submit"
 
 
 MOUSE_HOLD_BUTTONS = {

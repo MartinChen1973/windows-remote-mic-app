@@ -85,6 +85,9 @@ _REFERENCE_ACTION_LABELS: Dict[key_mapping.ActionKind, str] = {
     key_mapping.ActionKind.OPEN_CHROME: "打开 Chrome",
     key_mapping.ActionKind.OPEN_EDGE: "打开 Edge",
     key_mapping.ActionKind.OPEN_ZED: "打开 Zed",
+    key_mapping.ActionKind.COMMAND_SINK_TOGGLE: "指挥目标锁定",
+    key_mapping.ActionKind.COMMAND_SINK_PASTE: "指挥目标粘贴",
+    key_mapping.ActionKind.COMMAND_SINK_SUBMIT: "指挥目标发送",
 }
 _REFERENCE_ACTION_KINDS_BY_LABEL: Dict[str, key_mapping.ActionKind] = {
     label: action_kind for action_kind, label in _REFERENCE_ACTION_LABELS.items()
@@ -144,6 +147,14 @@ ACTION_OPTION_GROUPS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
             "打开程序", _OPEN_APPLICATION_DISPLAY, "打开 Claude", "打开 cmux 终端",
             "打开 Cursor", "打开 Slack", "打开企业微信", "打开网易云音乐",
             "打开 Chrome", "打开 Edge", "打开 Zed",
+        ),
+    ),
+    (
+        "指挥目标",
+        (
+            "指挥目标锁定",
+            "指挥目标粘贴",
+            "指挥目标发送",
         ),
     ),
     ("其他", ("禁用",)),

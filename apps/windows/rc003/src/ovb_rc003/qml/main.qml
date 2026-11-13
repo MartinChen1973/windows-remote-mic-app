@@ -302,6 +302,14 @@ ApplicationWindow {
                 exiting ? qsTr("无法准备退出") : qsTr("无法切换页面"),
                 message)
         }
+        function onCommandSinkTrayNotice(message) {
+            if (!systemTrayIcon.available || !message)
+                return
+            systemTrayIcon.showMessage(
+                SettingsController.applicationDisplayName,
+                message,
+                Platform.SystemTrayIcon.Information)
+        }
         function onWindowHideReady() {
             window.settleInputUiAfterStop()
             if (systemTrayIcon.available) {

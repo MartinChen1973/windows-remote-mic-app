@@ -141,6 +141,7 @@ from . import (
     vb_cable_bundle,
     voice_hotkey_sync_windows,
     voice_program_manager,
+    command_sink_windows,
     wetype_control_windows,
     win32_keys,
     window_chrome_windows,
@@ -1193,6 +1194,8 @@ def _load_qt_classes() -> dict:
         bridgeReconnectBusyChanged = Signal()
         desktopBehaviorChanged = Signal()
         trayStateChanged = Signal()
+        commandSinkLockedChanged = Signal()
+        commandSinkTrayNotice = Signal(str)
         maintenanceExitRequested = Signal()
         windowRestoreRequested = Signal()
         applicationExitReady = Signal()
@@ -1604,6 +1607,7 @@ def _load_qt_classes() -> dict:
                 and runtime_status.state
                 is bridge_runtime_status.BridgeConnectionState.CONNECTED
             )
+            self._command_sink_locked = False
             self._bridge_connection_state = (
                 runtime_status.state.value
                 if runtime_status is not None
@@ -2924,10 +2928,25 @@ def _load_qt_classes() -> dict:
 
         def _tray_icon_state(self) -> str:
             if self._bridge_connected and self._button_receiver_usable():
-                return "connected"
+                if self._command_sink_locked:
+                    return "connected_sink_locked"
+                return "connected_sink_open"
             if self._bridge_running:
                 return "waiting"
             return "off"
+
+        def _refresh_command_sink_state(self) -> None:
+            state = command_sink_windows.read_public_state(self._config_root)
+            locked = bool(state.locked)
+            if locked != self._command_sink_locked:
+                self._command_sink_locked = locked
+                self.commandSinkLockedChanged.emit()
+                self.trayStateChanged.emit()
+            notice_kind, notice_message = command_sink_windows.consume_tray_notice(
+                self._config_root
+            )
+            if notice_message:
+                self.commandSinkTrayNotice.emit(notice_message)
 
         def _tray_icon_source(self) -> str:
             path = resources.find_app_icon(self._tray_icon_state())
@@ -2947,7 +2966,13 @@ def _load_qt_classes() -> dict:
                 state = "正常"
             else:
                 state = "已连接，按键接收异常"
-            return f"{product_identity.DISPLAY_NAME}：{label} · {state}"
+            tooltip = f"{product_identity.DISPLAY_NAME}：{label} · {state}"
+            if self._bridge_connected and self._button_receiver_usable():
+                if self._command_sink_locked:
+                    tooltip += " · 指挥目标已锁定（可说话）"
+                else:
+                    tooltip += " · 指挥目标未锁定（请勿对 Cursor 说话）"
+            return tooltip
 
         def _set_bridge_launch_phase(self, value: str) -> None:
             if value == self._bridge_launch_phase:
@@ -3129,6 +3154,7 @@ def _load_qt_classes() -> dict:
                 self._set_launch_status(settings_ui.LAUNCH_NOT_STARTED_TEXT)
 
         def _refresh_bridge_status(self) -> bool | None:
+            self._refresh_command_sink_state()
             self._refresh_bridge_launch_elapsed()
             if _vb_cable_test_active_event.is_set():
                 return self._bridge_running
@@ -5925,6 +5951,12 @@ def _load_qt_classes() -> dict:
             bool,
             _get_bridge_connected,
             notify=bridgeConnectedChanged,
+        )
+
+        commandSinkLocked = Property(
+            bool,
+            lambda self: self._command_sink_locked,
+            notify=commandSinkLockedChanged,
         )
 
         bridgeConnectionState = Property(

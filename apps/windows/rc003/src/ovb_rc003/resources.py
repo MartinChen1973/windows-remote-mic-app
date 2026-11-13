@@ -54,6 +54,8 @@ _APP_ICON_FILENAMES = {
     "off": "remote-mic-unavailable.svg",
     "waiting": "remote-mic-unavailable.svg",
     "connected": "remote-mic-connected.svg",
+    "connected_sink_locked": "remote-mic-connected-sink-locked.svg",
+    "connected_sink_open": "remote-mic-connected-sink-open.svg",
 }
 
 

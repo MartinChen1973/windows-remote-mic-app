@@ -73,6 +73,7 @@ from . import (
     button_gesture,
     chromecast_host_activity,
     chromecast_runtime,
+    command_sink_windows,
     config,
     connection_supervisor,
     diagnostic_trace,
@@ -4847,6 +4848,21 @@ class RC003App:
                     action_error = "program_launch_busy"
             elif action.kind == key_mapping.ActionKind.QUICKER_URI:
                 action_executor.open_quicker_uri(action)
+            elif action.kind == key_mapping.ActionKind.COMMAND_SINK_TOGGLE:
+                try:
+                    command_sink_windows.toggle_lock()
+                except command_sink_windows.CommandSinkError as exc:
+                    action_error = exc.code
+            elif action.kind == key_mapping.ActionKind.COMMAND_SINK_PASTE:
+                try:
+                    command_sink_windows.paste_clipboard_to_sink()
+                except command_sink_windows.CommandSinkError as exc:
+                    action_error = exc.code
+            elif action.kind == key_mapping.ActionKind.COMMAND_SINK_SUBMIT:
+                try:
+                    command_sink_windows.submit_sink()
+                except command_sink_windows.CommandSinkError as exc:
+                    action_error = exc.code
             elif action_executor.is_application_action(action):
                 if not open_configured_application(action):
                     action_error = "application_unavailable"

@@ -691,10 +691,11 @@ class SettingsControllerTests(unittest.TestCase):
 
         self.assertTrue(controller.buttonReceiverUsable)
         self.assertTrue(
-            controller.trayIconSource.endswith("remote-mic-connected.svg")
+            controller.trayIconSource.endswith("remote-mic-connected-sink-open.svg")
         )
         self.assertIn(device_catalog.RC003_DISPLAY_NAME, controller.trayTooltip)
         self.assertIn("正常", controller.trayTooltip)
+        self.assertIn("未锁定", controller.trayTooltip)
 
         controller._set_bridge_connected(False)
         self.assertTrue(controller.buttonReceiverUsable)
@@ -748,7 +749,7 @@ class SettingsControllerTests(unittest.TestCase):
 
         self.assertTrue(controller.buttonReceiverUsable)
         self.assertTrue(
-            controller.trayIconSource.endswith("remote-mic-connected.svg")
+            controller.trayIconSource.endswith("remote-mic-connected-sink-open.svg")
         )
         self.assertIn("谷歌 Chromecast 遥控器", controller.trayTooltip)
         self.assertNotIn(device_catalog.RC003_DISPLAY_NAME, controller.trayTooltip)
