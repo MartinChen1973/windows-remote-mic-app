@@ -4,8 +4,9 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
-from ovb_rc003 import qt_settings_app
+from ovb_rc003 import config, qt_settings_app
 
 
 _RC003_ROOT = Path(__file__).resolve().parents[1]
@@ -47,6 +48,22 @@ class ApplicationIconTests(unittest.TestCase):
                 ("window", str(icon_path)),
             ],
         )
+
+    def test_windows_taskbar_identity_sets_app_user_model_id(self):
+        expected = f"{config.APP_ID}.{config.PRODUCT_ID}.Settings"
+        calls = []
+
+        def record_app_id(value):
+            calls.append(value)
+
+        with mock.patch.object(sys, "platform", "win32"):
+            with mock.patch.object(
+                qt_settings_app.ctypes.windll.shell32,
+                "SetCurrentProcessExplicitAppUserModelID",
+                side_effect=record_app_id,
+            ):
+                qt_settings_app._ensure_windows_taskbar_identity()
+        self.assertEqual(calls, [expected])
 
     def test_windows_ico_is_generated_from_the_shared_connected_svg(self):
         with tempfile.TemporaryDirectory() as tmpdir:

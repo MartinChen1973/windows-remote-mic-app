@@ -15,6 +15,7 @@ class VoiceInteractionDiagnosticsTests(unittest.TestCase):
             ("RichEditD2DPT", 0x0800, False, True, "native_edit_style"),
             ("RICHEDIT50W", 0x08000000, False, False, "native_edit_style"),
             ("Chrome_WidgetWin_1", 0, None, None, "unsupported_control"),
+            ("Chrome_RenderWidgetHostHWND", 0, None, None, "unsupported_control"),
             ("Button", 0, None, None, "unsupported_control"),
         ):
             with self.subTest(name=name):
@@ -28,6 +29,46 @@ class VoiceInteractionDiagnosticsTests(unittest.TestCase):
         result = diagnostics._focus_input_state(user32, 20, "Chrome_WidgetWin_1", info, True, True)
         self.assertFalse(result["focus_native_caret_detected"])
         self.assertIsNone(result["focus_editable"])
+
+    def test_electron_uia_editable_accepts_cursor_document_focus(self):
+        with mock.patch.object(
+            diagnostics, "_uia_focused_control_editable", return_value=True
+        ):
+            state = diagnostics._electron_chat_input_state(
+                diagnostics.CHROMIUM_SHELL_CLASS,
+                "Cursor.exe",
+                gui_info_ok=True,
+                stable=True,
+            )
+        self.assertIsNotNone(state)
+        assert state is not None
+        self.assertTrue(state["focus_editable"])
+        self.assertEqual(state["focus_input_status"], "electron_uia_editable")
+
+    def test_electron_chromium_shell_allows_lock_when_uia_is_unavailable(self):
+        with mock.patch.object(
+            diagnostics, "_uia_focused_control_editable", return_value=None
+        ):
+            state = diagnostics._electron_chat_input_state(
+                diagnostics.CHROMIUM_SHELL_CLASS,
+                "Cursor.exe",
+                gui_info_ok=True,
+                stable=True,
+            )
+        self.assertIsNotNone(state)
+        assert state is not None
+        self.assertTrue(state["focus_editable"])
+        self.assertEqual(state["focus_input_status"], "electron_chromium_focus")
+
+    def test_electron_path_rejects_non_chat_host(self):
+        self.assertIsNone(
+            diagnostics._electron_chat_input_state(
+                diagnostics.CHROMIUM_SHELL_CLASS,
+                "chrome.exe",
+                gui_info_ok=True,
+                stable=True,
+            )
+        )
 
     def test_missing_or_unstable_focus_never_becomes_user_error(self):
         info = diagnostics._GuiThreadInfo()

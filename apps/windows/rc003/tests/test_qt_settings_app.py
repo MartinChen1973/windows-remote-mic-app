@@ -13772,7 +13772,7 @@ class OffscreenQmlLoadTests(unittest.TestCase):
 
         cases = data["status_cases"]
         self.assertEqual(
-            cases["partial_raw_ready"]["buttons"]["state"], "点击“重启服务”"
+            cases["partial_raw_ready"]["buttons"]["state"], "改键通道未就绪"
         )
         self.assertEqual(
             cases["partial_raw_ready"]["buttons"]["detail"],
@@ -13911,7 +13911,7 @@ class OffscreenQmlLoadTests(unittest.TestCase):
         self.assertEqual(cases["hid_recovering"]["buttons"]["state"], "正在检查")
         self.assertFalse(cases["hid_recovering"]["action"]["visible"])
         self.assertEqual(
-            cases["voice_failed"]["buttons"]["state"], "点击“重启服务”"
+            cases["voice_failed"]["buttons"]["state"], "语音按键异常"
         )
         self.assertEqual(
             cases["voice_failed"]["buttons"]["detail"],
@@ -13934,7 +13934,7 @@ class OffscreenQmlLoadTests(unittest.TestCase):
         self.assertFalse(cases["raw_ready_hid_wait"]["action"]["visible"])
         self.assertEqual(
             cases["raw_failed_hid_wait"]["buttons"]["state"],
-            "点击“重启服务”",
+            "接收异常",
         )
         self.assertEqual(
             cases["raw_failed_hid_wait"]["service"]["state"],

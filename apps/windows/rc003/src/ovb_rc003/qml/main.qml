@@ -303,12 +303,7 @@ ApplicationWindow {
                 message)
         }
         function onCommandSinkTrayNotice(message) {
-            if (!systemTrayIcon.available || !message)
-                return
-            systemTrayIcon.showMessage(
-                SettingsController.applicationDisplayName,
-                message,
-                Platform.SystemTrayIcon.Information)
+            // Command-sink OK-step hints use a 2s on-screen banner from SettingsController.
         }
         function onWindowHideReady() {
             window.settleInputUiAfterStop()

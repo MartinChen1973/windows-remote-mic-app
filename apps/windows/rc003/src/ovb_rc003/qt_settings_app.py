@@ -95,6 +95,7 @@ functions (see that function's docstring for the full story).
 from __future__ import annotations
 
 import atexit
+import ctypes
 from dataclasses import dataclass, field
 import gc
 import os
@@ -271,12 +272,32 @@ def _apply_application_icon(
                     taskbar_overlay_windows.clear_overlay(hwnd)
 
 
+_SETTINGS_APP_USER_MODEL_ID = f"{config.APP_ID}.{config.PRODUCT_ID}.Settings"
+
+
+def _ensure_windows_taskbar_identity() -> None:
+    """Pin the process to our AppUserModelID so the taskbar does not show Python."""
+
+    if sys.platform != "win32":
+        return
+    try:
+        shell32 = ctypes.windll.shell32  # type: ignore[attr-defined]
+        setter = shell32.SetCurrentProcessExplicitAppUserModelID
+        setter.argtypes = (ctypes.c_wchar_p,)
+        setter(_SETTINGS_APP_USER_MODEL_ID)
+    except (AttributeError, OSError, TypeError):
+        pass
+
+
 def _apply_application_identity(app) -> None:
     """Applies the shared user-visible name to Qt's process identity."""
 
     set_application_name = getattr(app, "setApplicationName", None)
     if callable(set_application_name):
         set_application_name(product_identity.DISPLAY_NAME)
+    set_application_display_name = getattr(app, "setApplicationDisplayName", None)
+    if callable(set_application_display_name):
+        set_application_display_name(product_identity.DISPLAY_NAME)
 
 
 def _connect_application_exit(app, controller) -> None:
@@ -657,10 +678,10 @@ def _load_qt_classes() -> dict:
             Signal,
             Slot,
         )
-        from PySide6.QtGui import QIcon
+        from PySide6.QtGui import QGuiApplication, QIcon
         from PySide6.QtQml import QQmlApplicationEngine, qmlRegisterSingletonInstance
         from PySide6.QtQuickControls2 import QQuickStyle
-        from PySide6.QtWidgets import QApplication
+        from PySide6.QtWidgets import QApplication, QLabel, QVBoxLayout, QWidget
     except ImportError as exc:
         raise QtUnavailableError(
             "PySide6-Essentials 未安装，无法打开 Qt 设置界面。源码运行请先在本项目"
@@ -1185,6 +1206,68 @@ def _load_qt_classes() -> dict:
         def selected_button_id(self) -> str:
             return self._selected_button_id
 
+    _COMMAND_SINK_TRAY_NOTICE_MS = 2000
+
+    class _BriefScreenNotice:
+        """Short-lived on-screen banner; OS tray balloons cannot honor brief timeouts."""
+
+        def __init__(self) -> None:
+            self._shell: Optional[QWidget] = None
+            self._body_label: Optional[QLabel] = None
+            self._hide_generation = 0
+
+        def show(self, *, title: str, message: str, duration_ms: int) -> None:
+            if QApplication.instance() is None:
+                return
+            if self._shell is None:
+                shell = QWidget()
+                shell.setWindowFlags(
+                    Qt.WindowType.ToolTip
+                    | Qt.WindowType.FramelessWindowHint
+                    | Qt.WindowType.WindowStaysOnTopHint
+                )
+                shell.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+                shell.setStyleSheet(
+                    "background: #2b2d30; color: #e8e8e8; "
+                    "border: 1px solid #4a4d51; border-radius: 6px;"
+                )
+                layout = QVBoxLayout(shell)
+                layout.setContentsMargins(12, 10, 12, 10)
+                layout.setSpacing(4)
+                title_label = QLabel()
+                title_label.setStyleSheet("font-weight: 600; color: #ffffff;")
+                title_label.setWordWrap(True)
+                body_label = QLabel()
+                body_label.setWordWrap(True)
+                layout.addWidget(title_label)
+                layout.addWidget(body_label)
+                self._shell = shell
+                self._title_label = title_label
+                self._body_label = body_label
+            assert self._title_label is not None
+            assert self._body_label is not None
+            self._title_label.setText(title)
+            self._body_label.setText(message)
+            self._shell.adjustSize()
+            screen = QGuiApplication.primaryScreen()
+            if screen is not None:
+                geo = screen.availableGeometry()
+                margin = 16
+                self._shell.move(
+                    geo.right() - self._shell.width() - margin,
+                    geo.bottom() - self._shell.height() - margin,
+                )
+            self._hide_generation += 1
+            generation = self._hide_generation
+            self._shell.show()
+
+            def _hide_if_current() -> None:
+                if generation != self._hide_generation or self._shell is None:
+                    return
+                self._shell.hide()
+
+            QTimer.singleShot(duration_ms, _hide_if_current)
+
     class SettingsController(QObject):
         """QML-facing adapter over settings_ui.py's pure functions plus
         config.py/audio_output.py/bridge_launcher.py/logging_setup.py/
@@ -1627,6 +1710,12 @@ def _load_qt_classes() -> dict:
             )
             self._command_sink_locked = False
             self._command_sink_lamp = command_sink_windows.LAMP_OPEN
+            self._last_command_sink_tray_notice_key = ""
+            self._command_sink_tray_notice = _BriefScreenNotice()
+            command_sink_windows.drop_persisted_lock_on_process_start(
+                root=self._config_root
+            )
+            command_sink_windows.consume_tray_notice(self._config_root)
             self._bridge_connection_state = (
                 runtime_status.state.value
                 if runtime_status is not None
@@ -2967,11 +3056,32 @@ def _load_qt_classes() -> dict:
                 self._command_sink_lamp = lamp
                 self.commandSinkLockedChanged.emit()
                 self.trayStateChanged.emit()
-            notice_kind, notice_message = command_sink_windows.consume_tray_notice(
-                self._config_root
+            latest_notice: tuple[str, str, int] = ("", "", 0)
+            while True:
+                (
+                    notice_kind,
+                    notice_message,
+                    notice_seq,
+                ) = command_sink_windows.consume_tray_notice(self._config_root)
+                if not notice_message and not notice_kind:
+                    break
+                latest_notice = (notice_kind, notice_message, notice_seq)
+            notice_kind, notice_message, notice_seq = latest_notice
+            if notice_message or notice_kind:
+                notice_key = f"{notice_kind}\0{notice_seq}\0{notice_message}"
+                if notice_key != self._last_command_sink_tray_notice_key:
+                    self._last_command_sink_tray_notice_key = notice_key
+                    self._present_command_sink_tray_notice(notice_message)
+                    self.commandSinkTrayNotice.emit(notice_message)
+
+        def _present_command_sink_tray_notice(self, message: str) -> None:
+            if not message:
+                return
+            self._command_sink_tray_notice.show(
+                title=product_identity.DISPLAY_NAME,
+                message=message,
+                duration_ms=_COMMAND_SINK_TRAY_NOTICE_MS,
             )
-            if notice_message:
-                self.commandSinkTrayNotice.emit(notice_message)
 
         def _tray_icon_source(self) -> str:
             path = resources.find_app_icon(self._tray_icon_state())
@@ -8073,6 +8183,13 @@ def _load_qt_classes() -> dict:
         def _start_automatic_bridge_recovery(self) -> None:
             if not self._bridge_running or self._bridge_recovery_running:
                 return
+            if self._hid_helper_process_elevated is not True:
+                # Same guard as resume recovery: avoid surfacing UAC while the
+                # user only opened the device page or refreshed status.
+                self._set_launch_status(
+                    "恢复需要管理员权限；请在“遥控器服务”行点击“重启服务”。"
+                )
+                return
             status = bridge_runtime_status.read_status(self._config_root)
             if status is None or status.voice_active:
                 return
@@ -10368,6 +10485,7 @@ def run_settings_window(
     # this candidate's offscreen render/screenshot step below relies on.
     QQuickStyle.setStyle("FluentWinUI3")
 
+    _ensure_windows_taskbar_identity()
     app = QGuiApplication.instance() or QGuiApplication(sys.argv)
     _apply_application_identity(app)
     set_quit_on_last_window_closed = getattr(
@@ -10388,25 +10506,12 @@ def run_settings_window(
 
     def update_application_icon() -> None:
         state = controller._tray_icon_state()
-        sink_lamps = {
-            "connected_sink_locked": command_sink_windows.LAMP_LOCKED,
-            "connected_sink_open": command_sink_windows.LAMP_OPEN,
-            "connected_sink_rejected": command_sink_windows.LAMP_REJECTED,
-        }
-        sink_lamp = sink_lamps.get(state, "")
-        path = (
-            resources.find_app_icon("connected")
-            if sink_lamp
-            else resources.find_app_icon(state)
-        )
+        if sys.platform == "win32":
+            path = resources.find_app_icon_win32(state) or resources.find_app_icon(state)
+        else:
+            path = resources.find_app_icon(state)
         if path is not None:
-            _apply_application_icon(
-                app,
-                root_window,
-                QIcon,
-                path,
-                sink_lamp=sink_lamp,
-            )
+            _apply_application_icon(app, root_window, QIcon, path)
 
     update_application_icon()
     controller.trayStateChanged.connect(update_application_icon)
@@ -10486,6 +10591,21 @@ def run_settings_window(
             root_window,
             hwnd=settings_window_hwnd,
         )
+        if sys.platform == "win32":
+            from . import taskbar_context_menu_windows
+
+            def _taskbar_open_settings() -> None:
+                controller.windowRestoreRequested.emit()
+
+            controller._taskbar_context_menu_filter = (
+                taskbar_context_menu_windows.install_settings_taskbar_context_menu(
+                    app,
+                    hwnd=settings_window_hwnd,
+                    app_user_model_id=_SETTINGS_APP_USER_MODEL_ID,
+                    on_open_settings=_taskbar_open_settings,
+                    on_request_full_exit=controller.requestApplicationExit,
+                )
+            )
 
         if (
             sys.platform == "win32"

@@ -39,6 +39,11 @@ try {
         throw "The local .venv is missing. Install the development requirements first."
     }
 
+    $StopDev = Join-Path $PSScriptRoot "stop-dev.ps1"
+    if (Test-Path -LiteralPath $StopDev -PathType Leaf) {
+        & $StopDev
+    }
+
     $env:PYTHONPATH = Join-Path $RC003Root "src"
     $env:PYTHONDONTWRITEBYTECODE = "1"
     $env:REMOTE_MIC_DEV_SESSION = "1"

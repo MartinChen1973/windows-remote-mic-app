@@ -5,7 +5,7 @@ rem  Rapid source setup: creates the Python 3.12 environment, installs the
 rem  pinned dependencies, verifies the runtime, and opens the settings window.
 rem
 rem  Usage:
-rem    setup.bat            Set up, verify, and launch the application.
+rem    setup.bat            Set up, verify, restart dev session, and launch.
 rem    setup.bat /no-run    Set up and verify only.
 rem    setup.bat /rebuild   Recreate .venv from scratch, then install.
 rem    setup.bat /test      Also run the unit test suite.
@@ -174,6 +174,12 @@ echo [setup] permissions: setup itself needs no Administrator.
 echo [setup]             Windows may ask later when you start the Google remote
 echo [setup]             service (elevated receiver), fix Xiaomi custom keys,
 echo [setup]             or install VB-CABLE from the Voice page.
+set "STOP_DEV=%PROJECT%\build\stop-dev.ps1"
+if not exist "%STOP_DEV%" goto :LaunchStart
+echo [setup] restarting: stopping any marked development session
+powershell -NoProfile -ExecutionPolicy Bypass -File "%STOP_DEV%"
+if errorlevel 1 goto :StopDevFailed
+:LaunchStart
 echo [setup] starting: settings window
 start "" "%VENV_PYW%" -m ovb_rc003 --settings --remote-mic-dev-session
 
@@ -249,7 +255,7 @@ goto :Usage
 echo.
 echo Remote Mic - RC003 rapid source setup
 echo.
-echo   setup.bat            Set up, verify, and launch the application.
+echo   setup.bat            Set up, verify, restart dev session, and launch.
 echo   setup.bat /no-run    Set up and verify only.
 echo   setup.bat /rebuild   Recreate .venv from scratch, then install.
 echo   setup.bat /test      Also run the unit test suite.
@@ -293,4 +299,11 @@ exit /b 1
 :TestsFailed
 popd
 echo [setup] error: the unit test suite reported failures.
+exit /b 1
+
+:StopDevFailed
+echo [setup] error: could not stop the running development session.
+echo         If a copy is stuck, fully quit from the tray or run:
+echo         %STOP_DEV%
+echo         Close any packaged RemoteMicRC003.exe before retrying setup.
 exit /b 1

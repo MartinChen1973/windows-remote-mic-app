@@ -221,6 +221,9 @@ def open_configured_application(action: key_mapping.ButtonAction) -> bool:
 class RC003App:
     def __init__(self, *, launch_voice_program_on_start: bool = True) -> None:
         self._config_root = config.config_root()
+        command_sink_windows.drop_persisted_lock_on_process_start(
+            root=self._config_root
+        )
         self._config_path = config.config_path(self._config_root)
         self._config = config.load_config(self._config_path)
         from . import remote_selection
@@ -4111,6 +4114,25 @@ class RC003App:
         if self._pending_bindings is None:
             self._logger.info("settings reloaded from disk")
 
+    def _emit_ok_single_mapping_for_sink(self) -> None:
+        """Run the user's OK single-click mapping while command sink is locked."""
+
+        action = key_mapping.button_action_for(
+            self._bindings,
+            "ok",
+            key_mapping.ButtonTrigger.SINGLE_CLICK,
+        )
+        if action.kind == key_mapping.ActionKind.KEY_COMBO:
+            win32_input.send_key_combo_tap(action.keys)
+            return
+        if action.kind == key_mapping.ActionKind.RETURN:
+            win32_input.send_return()
+            return
+        self._logger.info(
+            "command sink ok single mapping not injected: kind=%s",
+            action.kind.value,
+        )
+
     def _refresh_sink_tray_lamp(self) -> None:
         tray = self._bridge_notification_tray
         if tray is None:
@@ -4637,6 +4659,18 @@ class RC003App:
     def _is_button_action_configured(
         self, button_id: str, trigger: button_gesture.ButtonTrigger
     ) -> bool:
+        if (
+            str(button_id) == "ok"
+            and command_sink_windows.should_hijack_ok_button(
+                root=self._config_root
+            )
+        ):
+            if trigger is button_gesture.ButtonTrigger.SINGLE_CLICK:
+                return True
+            if trigger is button_gesture.ButtonTrigger.DOUBLE_CLICK:
+                return command_sink_windows.ok_recognizes_double_click(
+                    root=self._config_root
+                )
         if button_id in self._removed_voice_bindings:
             return False
         action = key_mapping.button_action_for(self._bindings, button_id, trigger)
@@ -4734,6 +4768,39 @@ class RC003App:
             trigger=str(trigger.value),
             action=str(action.kind.value),
         )
+        if (
+            str(button_id) == "ok"
+            and command_sink_windows.should_hijack_ok_button(
+                root=self._config_root
+            )
+        ):
+            try:
+                if trigger is button_gesture.ButtonTrigger.SINGLE_CLICK:
+                    command_sink_windows.on_ok_single_tap(
+                        root=self._config_root,
+                        emit_ok_single=self._emit_ok_single_mapping_for_sink,
+                    )
+                elif trigger is button_gesture.ButtonTrigger.DOUBLE_CLICK:
+                    command_sink_windows.on_ok_double_tap(root=self._config_root)
+                else:
+                    return
+            except command_sink_windows.CommandSinkError as exc:
+                self._logger.info(
+                    "command sink ok gesture rejected: %s", exc.code
+                )
+            except Exception:
+                # A mapping or tray update bug must not escape the Chromecast
+                # receive loop and tear down the whole bridge session.
+                self._logger.exception(
+                    "command sink ok gesture failed: button=%s trigger=%s",
+                    button_id,
+                    trigger.value,
+                )
+            try:
+                self._refresh_sink_tray_lamp()
+            except Exception:
+                self._logger.exception("command sink tray lamp refresh failed")
+            return
         try:
             if action.kind == key_mapping.ActionKind.KEY_COMBO:
                 win32_keys.resolve_vk_codes(action.keys)
@@ -4758,21 +4825,6 @@ class RC003App:
                 button_id,
                 trigger.value,
             )
-            return
-        if (
-            str(button_id) == "ok"
-            and command_sink_windows.should_hijack_ok_button()
-        ):
-            try:
-                if trigger is button_gesture.ButtonTrigger.SINGLE_CLICK:
-                    command_sink_windows.on_ok_single_tap()
-                elif trigger is button_gesture.ButtonTrigger.DOUBLE_CLICK:
-                    command_sink_windows.on_ok_double_tap()
-            except command_sink_windows.CommandSinkError as exc:
-                self._logger.info(
-                    "command sink ok gesture rejected: %s", exc.code
-                )
-            self._refresh_sink_tray_lamp()
             return
         if action.kind in key_mapping.MOUSE_HOLD_BUTTONS:
             if hold_owner is not None:
@@ -4888,9 +4940,6 @@ class RC003App:
                 except command_sink_windows.CommandSinkError as exc:
                     action_error = exc.code
                     if exc.code == command_sink_windows.FOCUS_NOT_EDITABLE:
-                        command_sink_windows.record_lock_rejection(
-                            root=self._config_root
-                        )
                         self._refresh_sink_tray_lamp()
             elif action.kind == key_mapping.ActionKind.COMMAND_SINK_SUBMIT:
                 try:

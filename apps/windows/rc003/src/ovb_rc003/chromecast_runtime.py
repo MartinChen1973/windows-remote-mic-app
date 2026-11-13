@@ -6,6 +6,7 @@ its receiver and voice host until both confirm cleanup, preserving switch safety
 from __future__ import annotations
 
 import asyncio
+import json
 import threading
 import time
 from dataclasses import dataclass
@@ -47,10 +48,30 @@ class ChromecastRuntime:
     def cancel_input(self):
         reason = self.client.reason if self.client is not None else "capture_failed"
         loss_state = self.loss_state() if self.client is not None else "unknown"
+        extra = ""
+        client = self.client
+        if client is not None:
+            try:
+                extra = json.dumps(
+                    {
+                        "run": client.identity.generation[:12],
+                        "failure_code": client.failure_code,
+                        "failure_stage": client.failure_stage,
+                        "last_edge": getattr(client, "_last_edge_context", ""),
+                        "last_callback_error": getattr(
+                            client, "_last_callback_error_type", ""
+                        ),
+                        "input_counts": getattr(client, "_input_counts", {}),
+                    },
+                    separators=(",", ":"),
+                )
+            except Exception:
+                extra = "context_unavailable"
         self.services.logger.info(
-            "Chromecast input lost: reason=%s loss_state=%s",
+            "Chromecast input lost: reason=%s loss_state=%s context=%s",
             reason,
             loss_state,
+            extra,
         )
         self.services.disable_input()
         if self.client is not None and not self.stopping.is_set():

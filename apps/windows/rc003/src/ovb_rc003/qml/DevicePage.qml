@@ -297,12 +297,12 @@ Item {
         case "conflict": return qsTr("设备识别异常")
         case "ready": return qsTr("正常")
         case "service_stopped": return qsTr("等待服务启动")
-        case "custom_only": return qsTr("点击“重启服务”")
-        case "original_only": return qsTr("点击“重启服务”")
-        case "voice_error": return qsTr("点击“重启服务”")
+        case "custom_only": return qsTr("改键通道未就绪")
+        case "original_only": return qsTr("原生按键未就绪")
+        case "voice_error": return qsTr("语音按键异常")
         case "system_error": return qsTr("请升级系统")
         case "error": return SettingsController.bridgeRunning
-            ? qsTr("点击“重启服务”") : qsTr("点击“重新检查”")
+            ? qsTr("接收异常") : qsTr("点击“重新检查”")
         default: return qsTr("未检查")
         }
     }

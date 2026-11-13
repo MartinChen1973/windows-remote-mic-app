@@ -37,9 +37,9 @@ class HidDiagnosticsTests(unittest.TestCase):
                 self.assertEqual(client._input_counts["suppressed"], 1)
                 client.cancel.clear()
                 client.on_edge.side_effect = ValueError("callback failed")
-                with self.assertRaises(ValueError):
-                    client._deliver(down)
+                client._deliver(down)
                 self.assertEqual(client._input_counts["callback_failed"], 1)
+                self.assertEqual(client._input_counts["delivered"], 2)
                 with mock.patch("ovb_rc003.chromecast_client.logging.getLogger") as logger:
                     client._log_input_flow()
                     client._log_input_flow()

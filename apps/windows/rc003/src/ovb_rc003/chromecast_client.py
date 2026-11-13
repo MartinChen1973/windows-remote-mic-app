@@ -78,6 +78,8 @@ class Client:
         self._input_counts = dict.fromkeys(("received", "delivered", "down_delivered",
                                             "suppressed", "callback_failed", "stale"), 0)
         self._last_input_log = 0.0
+        self._last_edge_context = ""
+        self._last_callback_error_type = ""
         logger = logging.getLogger("ovb_rc003")
         self._shutdown = CleanupProgress(logger, "receiver", self.identity.generation[:12])
         self._worker_shutdown = CleanupProgress(logger, "worker_observed", self.identity.generation[:12])
@@ -277,14 +279,34 @@ class Client:
                 self._kernel.CloseHandle(handle)
             self._process = self._worker_process = None
 
+    def _describe_edge(self, edge) -> str:
+        try:
+            return json.dumps(
+                {
+                    "button": str(getattr(edge, "button", "")),
+                    "action": str(getattr(edge, "action", "")),
+                    "generation": str(getattr(edge, "generation", ""))[:12],
+                },
+                separators=(",", ":"),
+            )
+        except Exception:
+            return "edge_description_unavailable"
+
     def _deliver(self, edge):
         with self._callback_lock:
             if (not self.cancel.is_set() and not self.failed.is_set()) or edge.action == "cancel":
+                self._last_edge_context = self._describe_edge(edge)
                 try:
                     self.on_edge(edge)
-                except Exception:
+                except Exception as error:
                     self._count_input("callback_failed")
-                    raise
+                    self._last_callback_error_type = type(error).__name__
+                    logging.getLogger("ovb_rc003").exception(
+                        "Chromecast button callback failed (receiver stays up): run=%s edge=%s",
+                        self.identity.generation[:12],
+                        self._last_edge_context,
+                    )
+                    return
                 self._count_input("delivered")
                 if edge.action == "down":
                     self._count_input("down_delivered")
@@ -488,11 +510,35 @@ class Client:
                            else "pipe_connect_failed" if self.failure_stage == "pipe_connect" else "capture_failed")
             if self._first_worker_failure:
                 self.reason = self._first_worker_failure
+            log = logging.getLogger("ovb_rc003")
+            detail = json.dumps(
+                {
+                    "input_counts": self._input_counts,
+                    "last_edge": self._last_edge_context,
+                    "last_callback_error": self._last_callback_error_type,
+                    "ready": self.ready.is_set(),
+                    "failed": self.failed.is_set(),
+                },
+                separators=(",", ":"),
+            )
             if not self.cancel.is_set():
-                logging.getLogger("ovb_rc003").warning(
-                    "Chromecast receiver failed: stage=%s reason=%s code=%s",
-                    self.failure_stage, self.reason, self.failure_code,
-                    extra={"failure_key": f"chromecast:receiver:{self.reason}"})
+                log.exception(
+                    "Chromecast receiver failed: stage=%s reason=%s code=%s run=%s context=%s",
+                    self.failure_stage,
+                    self.reason,
+                    self.failure_code,
+                    self.identity.generation[:12],
+                    detail,
+                    extra={"failure_key": f"chromecast:receiver:{self.reason}"},
+                )
+            else:
+                log.info(
+                    "Chromecast receiver stopped during shutdown: stage=%s reason=%s code=%s run=%s",
+                    self.failure_stage,
+                    self.reason,
+                    self.failure_code,
+                    self.identity.generation[:12],
+                )
         finally:
             try:
                 logging.getLogger("ovb_rc003").info(

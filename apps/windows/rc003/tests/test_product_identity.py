@@ -211,6 +211,19 @@ class ProductIdentityTests(unittest.TestCase):
         qt_settings_app._apply_application_identity(FakeApplication())
         self.assertEqual(calls, [product_identity.DISPLAY_NAME])
 
+    def test_qt_process_identity_sets_application_display_name_when_available(self):
+        calls = []
+
+        class FakeApplication:
+            def setApplicationName(self, value):
+                pass
+
+            def setApplicationDisplayName(self, value):
+                calls.append(value)
+
+        qt_settings_app._apply_application_identity(FakeApplication())
+        self.assertEqual(calls, [product_identity.DISPLAY_NAME])
+
     def test_element_navigation_keeps_its_standalone_process_identity(self):
         navigation_host = (
             _RC003_ROOT / "scripts" / "element_navigation_windows_host.py"
