@@ -254,6 +254,7 @@ class RC003App:
         )
         self._button_combos = button_combo.ButtonComboRecognizer()
         self._logger: logging.Logger = logging_setup.get_logger(self._config_root)
+        self._bridge_notification_tray = None
         self._last_raw_input_lookup_diagnostic = None
         self._diagnostic_trace = diagnostic_trace.DiagnosticTrace(
             self._config_root,
@@ -4110,6 +4111,22 @@ class RC003App:
         if self._pending_bindings is None:
             self._logger.info("settings reloaded from disk")
 
+    def _refresh_sink_tray_lamp(self) -> None:
+        tray = self._bridge_notification_tray
+        if tray is None:
+            return
+        public = command_sink_windows.read_public_state(self._config_root)
+        if public.locked:
+            tray.refresh_command_sink_lamp(
+                icon_state="connected_sink_locked",
+                tooltip_suffix=" · 绿点：已锁定",
+            )
+        else:
+            tray.refresh_command_sink_lamp(
+                icon_state="connected_sink_open",
+                tooltip_suffix=" · 橙点：未锁定",
+            )
+
     def request_settings_reload_now(self) -> None:
         """Apply saved settings promptly from the bridge event-loop thread."""
 
@@ -4754,6 +4771,7 @@ class RC003App:
                 self._logger.info(
                     "command sink ok gesture rejected: %s", exc.code
                 )
+            self._refresh_sink_tray_lamp()
             return
         if action.kind in key_mapping.MOUSE_HOLD_BUTTONS:
             if hold_owner is not None:
@@ -4865,6 +4883,7 @@ class RC003App:
             elif action.kind == key_mapping.ActionKind.COMMAND_SINK_TOGGLE:
                 try:
                     command_sink_windows.toggle_lock()
+                    self._refresh_sink_tray_lamp()
                 except command_sink_windows.CommandSinkError as exc:
                     action_error = exc.code
             elif action.kind == key_mapping.ActionKind.COMMAND_SINK_SUBMIT:
@@ -6493,6 +6512,8 @@ async def _run(
                     ),
                 )
                 if tray.start():
+                    app._bridge_notification_tray = tray
+                    app._refresh_sink_tray_lamp()
                     app._logger.info("notification area: bridge control icon started")
                 else:
                     app._logger.warning(

@@ -241,7 +241,15 @@ class QtUnavailableError(RuntimeError):
     """
 
 
-def _apply_application_icon(app, window, icon_type, icon_path: Path) -> None:
+def _apply_application_icon(
+    app,
+    window,
+    icon_type,
+    icon_path: Path,
+    *,
+    sink_lamp: bool = False,
+    sink_locked: bool = False,
+) -> None:
     """Applies one state icon to Qt's default and the loaded native window."""
 
     icon = icon_type(str(icon_path))
@@ -251,6 +259,21 @@ def _apply_application_icon(app, window, icon_type, icon_path: Path) -> None:
     set_window_icon = getattr(window, "setIcon", None)
     if callable(set_window_icon):
         set_window_icon(icon)
+    if window is not None:
+        win_id = getattr(window, "winId", None)
+        if callable(win_id):
+            from . import taskbar_overlay_windows
+
+            hwnd = int(win_id())
+            if hwnd:
+                if sink_lamp:
+                    taskbar_overlay_windows.apply_sink_lamp_overlay(
+                        hwnd,
+                        show_lamp=True,
+                        locked=sink_locked,
+                    )
+                else:
+                    taskbar_overlay_windows.clear_overlay(hwnd)
 
 
 def _apply_application_identity(app) -> None:
@@ -2969,9 +2992,9 @@ def _load_qt_classes() -> dict:
             tooltip = f"{product_identity.DISPLAY_NAME}：{label} · {state}"
             if self._bridge_connected and self._button_receiver_usable():
                 if self._command_sink_locked:
-                    tooltip += " · 指挥目标已锁定（可说话）"
+                    tooltip += " · 绿点：指挥目标已锁定（可说话）"
                 else:
-                    tooltip += " · 指挥目标未锁定（请勿对 Cursor 说话）"
+                    tooltip += " · 橙点：指挥目标未锁定（请勿对 Cursor 说话）"
             return tooltip
 
         def _set_bridge_launch_phase(self, value: str) -> None:
@@ -10354,12 +10377,25 @@ def run_settings_window(
     root_window = None
 
     def update_application_icon() -> None:
-        path = resources.find_app_icon(controller._tray_icon_state())
+        state = controller._tray_icon_state()
+        path = resources.find_app_icon(state)
         if path is not None:
-            _apply_application_icon(app, root_window, QIcon, path)
+            show_lamp = state in (
+                "connected_sink_locked",
+                "connected_sink_open",
+            )
+            _apply_application_icon(
+                app,
+                root_window,
+                QIcon,
+                path,
+                sink_lamp=show_lamp,
+                sink_locked=state == "connected_sink_locked",
+            )
 
     update_application_icon()
     controller.trayStateChanged.connect(update_application_icon)
+    controller.commandSinkLockedChanged.connect(update_application_icon)
     diagnostics_controller = DiagnosticsController(
         controller,
         config.config_root(),

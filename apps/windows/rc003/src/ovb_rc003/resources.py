@@ -58,6 +58,11 @@ _APP_ICON_FILENAMES = {
     "connected_sink_open": "remote-mic-connected-sink-open.svg",
 }
 
+_TASKBAR_DOT_FILENAMES = {
+    "taskbar-dot-green": "taskbar-dot-green.ico",
+    "taskbar-dot-orange": "taskbar-dot-orange.ico",
+}
+
 
 def _source_resource_root() -> Path:
     module_path = Path(__file__).resolve()
@@ -123,4 +128,30 @@ def find_app_icon(state: str = "waiting") -> Optional[Path]:
         candidate = directory / filename
         if candidate.is_file():
             return candidate
+    return None
+
+
+def find_app_icon_win32(state: str = "waiting") -> Optional[Path]:
+    """ICO variant for Win32 ``LoadImage`` (notification area without Qt)."""
+
+    svg_name = _APP_ICON_FILENAMES.get(str(state), _APP_ICON_FILENAMES["waiting"])
+    ico_name = Path(svg_name).with_suffix(".ico").name
+    for directory in _app_icon_directory_candidates():
+        candidate = directory / ico_name
+        if candidate.is_file():
+            return candidate
+    return find_app_icon(state)
+
+
+def find_taskbar_dot_icon(name: str) -> Optional[Path]:
+    filename = _TASKBAR_DOT_FILENAMES.get(str(name))
+    if not filename:
+        return None
+    for directory in _app_icon_directory_candidates():
+        candidate = directory / filename
+        if candidate.is_file():
+            return candidate
+        dot_svg = directory / f"{name}.svg"
+        if dot_svg.is_file():
+            return dot_svg
     return None

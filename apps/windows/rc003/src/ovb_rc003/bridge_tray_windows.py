@@ -15,7 +15,7 @@ import sys
 import threading
 from typing import Callable
 
-from . import device_catalog, product_identity
+from . import device_catalog, product_identity, resources
 
 
 WM_DESTROY = 0x0002
@@ -28,6 +28,7 @@ WM_APP = 0x8000
 WM_TRAY_CALLBACK = WM_APP + 1
 
 NIM_ADD = 0x00000000
+NIM_MODIFY = 0x00000001
 NIM_DELETE = 0x00000002
 NIM_SETVERSION = 0x00000004
 NOTIFYICON_VERSION_4 = 4
@@ -140,6 +141,7 @@ class BridgeTray:
         self._nid: NOTIFYICONDATAW | None = None
         self._owned_icons: list[int] = []
         self._user32 = None
+        self._shell32 = None
 
     @property
     def startup_error(self) -> str:
@@ -302,6 +304,7 @@ class BridgeTray:
     def _run_message_loop(self) -> None:
         user32, shell32, kernel32 = self._configure_apis()
         self._user32 = user32
+        self._shell32 = shell32
         instance = kernel32.GetModuleHandleW(None)
         class_name = f"RemoteMicRC003BridgeTray.{os.getpid()}"
         taskbar_created = user32.RegisterWindowMessageW("TaskbarCreated")
@@ -390,6 +393,60 @@ class BridgeTray:
                 user32.DestroyIcon(handle)
             self._owned_icons.clear()
             user32.UnregisterClassW(class_name, instance)
+
+    def refresh_command_sink_lamp(
+        self,
+        *,
+        icon_state: str,
+        tooltip_suffix: str = "",
+    ) -> None:
+        """Update the notification-area icon to show orange/green sink lamps."""
+
+        user32 = self._user32
+        shell32 = self._shell32
+        if user32 is None or shell32 is None or self._nid is None:
+            return
+        icon_path = resources.find_app_icon_win32(icon_state)
+        if icon_path is None:
+            icon_path = resources.find_app_icon(icon_state)
+        if icon_path is None:
+            return
+        handle = self._load_icon_from_path(user32, icon_path)
+        if not handle:
+            return
+        tip = self._tooltip
+        if tooltip_suffix:
+            tip = f"{tip}{tooltip_suffix}"[:127]
+        self._nid.hIcon = handle
+        self._nid.szTip = tip
+        self._nid.uFlags = NIF_ICON | NIF_TIP
+        shell32.Shell_NotifyIconW(NIM_MODIFY, ctypes.byref(self._nid))
+
+    def _load_icon_from_path(self, user32, icon_path) -> int:
+        from pathlib import Path
+
+        path = Path(icon_path)
+        if path.suffix.lower() == ".ico":
+            large = wintypes.HICON()
+            small = wintypes.HICON()
+            shell32 = self._shell32
+            if shell32 is None:
+                return 0
+            extracted = shell32.ExtractIconExW(
+                str(path),
+                0,
+                ctypes.byref(large),
+                ctypes.byref(small),
+                1,
+            )
+            for icon in (large, small):
+                if icon.value and int(icon.value) not in self._owned_icons:
+                    self._owned_icons.append(int(icon.value))
+            if extracted and small.value:
+                return int(small.value)
+            if extracted and large.value:
+                return int(large.value)
+        return self._load_icon(user32, shell32 or ctypes.WinDLL("shell32"))
 
     def _load_icon(self, user32, shell32) -> int:
         large = wintypes.HICON()

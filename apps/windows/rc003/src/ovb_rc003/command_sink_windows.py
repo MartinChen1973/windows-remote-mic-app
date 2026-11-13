@@ -127,7 +127,10 @@ def toggle_lock(*, root: Optional[Path] = None) -> CommandSinkActionResult:
             _write_unlocked(payload)
             _save_payload(payload, root)
             _reset_session(cancel_worker=True)
-            message = "指挥目标已解锁。未锁定前请勿对 Cursor 说话，以免文字无法粘贴。"
+            message = (
+                "指挥目标已解锁（橙点）。未锁定前请勿对 Cursor 说话，"
+                "以免文字无法粘贴。"
+            )
             return CommandSinkActionResult(
                 locked=False,
                 changed=True,
@@ -156,8 +159,8 @@ def toggle_lock(*, root: Optional[Path] = None) -> CommandSinkActionResult:
             "tray_notice": {
                 "kind": NOTICE_LOCKED,
                 "message": (
-                    "指挥目标已锁定。语音结束后按一次 OK 记录剪贴板，再按 OK 等待识别并粘贴；"
-                    "双击 OK 发送。"
+                    "指挥目标已锁定（绿点）。语音结束后按一次 OK 记录剪贴板，"
+                    "再按 OK 等待识别并粘贴；双击 OK 发送。"
                 ),
             },
         }
